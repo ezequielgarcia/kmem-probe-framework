@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# You must be root!
+# TODO: You must be root!
 
-echo "Cleaning previous probefs"
-umount ./probefs &> /dev/null
-rm -f ./probefs.img
+source clean.sh
 
 echo "Creating ext2 fs"
 dd if=/dev/zero of=probefs.img bs=10M count=1 &>> create.log
