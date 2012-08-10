@@ -1,0 +1,5 @@
+mount -a
+mount -n -o remount,rw /
+test -L /debug || ln -s /sys/kernel/debug /debug
+cat /debug/tracing/trace > boot_kmem.log
+cat /proc/slab_account > boot_account.log
