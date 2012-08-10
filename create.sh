@@ -1,6 +1,9 @@
 #!/bin/bash
 
-# TODO: You must be root!
+if [[ $UID -ne 0 ]]; then
+  echo "$0 must be run as root!"
+  exit 1
+fi
 
 source clean.sh
 
@@ -15,9 +18,9 @@ echo "Creating device nodes"
 mkdir -p probefs/proc probefs/dev probefs/sys
 source mkdevs.sh ./probefs/dev
 
-echo "Installing busybox"
+echo "Installing fs"
 rsync -a ./busybox/_install/ ./probefs
-cp -a ./busybox/examples/bootfloppy/etc ./probefs
+cp -a ./templatefs/* ./probefs
 chown -R root:root ./probefs
 
 sync
