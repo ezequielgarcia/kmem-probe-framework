@@ -1,0 +1,45 @@
+
+1. Debug Filesystem
+
+It's a RAM-based filesystem that can be used to output a lot of different 
+debugging information. This filesystem is called debugfs and can be enabled by:
+
+    Kernel hacking
+        [*] Debug filesystem
+
+After you enable this option and boot the rebuilt kernel,
+it creates the directory /sys/kernel/debug as a location
+for the user to mount the debugfs filesystem.
+Do this manually by:
+
+    $  mount -t debugfs none /sys/kernel/debug
+
+2. Tracing
+
+It's also necesary to enable tracing (CONFIG_XXX_TRACING or something).
+Once it is enabled you should see a debug/tracing directory.
+
+Traced events can be read through debug/tracing/trace.
+To enable events (e.g. kmem events) you can add this to kernel parameters:
+    
+    trace_event=kmem:kmalloc,kmem:kmem_cache_alloc,kmem:kfree,kmem:kmem_cache_free
+
+Beware: if you use SLOB on non-NUMA systems, where you might expect Xalloc_node not get called,
+actually it is the only one called. This is due to SLOB implementing only
+Xalloc_node (and Xalloc as an inlined wrapper with node -1).
+
+(From Documentation/trace/ftrace.txt)
+  debug/tracing/trace:
+
+    This file holds the output of the trace in a human
+    readable format (described below).
+
+  debug/tracing/trace_pipe:
+
+    The output is the same as the "trace" file but this
+    file is meant to be streamed with live tracing.
+    Reads from this file will block until new data is
+    retrieved.
+
+(Also, Documentation/trace/tracepoint-analysis.txt is a very fundamental reading).
+

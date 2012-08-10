@@ -1,0 +1,43 @@
+
+Call sites  or The painstaking task of wrestling against gcc
+
+Compiler inlines *a lot* automatically and without warning.
+In this scenario, it's impossible to get *real* call site
+based on just calling address.
+
+Does this matter? Perhaps not, as long as you stay on same file
+or subsytem to say the least. In this case, we can still get
+which subsystem is triggering the allocation event.
+
+If you really need to get the real call site, you have a few
+alternatives:
+
+* Explicitly mark the function as "don't inline".
+  You can do this through gcc function attribute "noinline".
+  This solution is rather impractical, for obvious reasons.
+
+* Use __func__ C99 standard variable instead of builtin_address(0).
+  But this would mean changing a lot the tracing code and 
+  I think it would be far more expensive.
+
+* Turn off gcc inlining using an options on kernel Makefile.
+  The options are: no-default-inline, no-inline, no-inline-small-functions.
+  It's still unclear which one is the right one, but it seems to be the latter.
+  See this patch:
+
+diff --git a/Makefile b/Makefile
+index 8e4c0a7..23f1a88 100644
+--- a/Makefile
++++ b/Makefile
+@@ -363,6 +363,7 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+                   -fno-strict-aliasing -fno-common \
+                   -Werror-implicit-function-declaration \
+                   -Wno-format-security \
++                  -fno-default-inline -fno-inline -fno-inline-small-functions \
+                   -fno-delete-null-pointer-checks
+ KBUILD_AFLAGS_KERNEL :=
+ KBUILD_CFLAGS_KERNEL :=
+---
+
+Of course, this option makes kernel bigger and slower, 
+but this is an expected side-effect on a debug-only kernel.
