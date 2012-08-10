@@ -47,6 +47,8 @@ mknod tty c 5 0
 for i in `seq 0 9`; do
 	mknod tty$i c 4 $i
 done
+mknod -m 660 ttyS0 c 4 64
+chown root:tty ttyS0
 
 # virtual console screen devs
 for i in `seq 0 9`; do
