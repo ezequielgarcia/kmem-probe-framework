@@ -1,0 +1,249 @@
+diff --git a/init/main.c b/init/main.c
+index b5cc0a7..0790373 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -462,6 +462,8 @@ static void __init mm_init(void)
+ 	vmalloc_init();
+ }
+ 
++__init int event_trace_enable(void);
++void early_tracer_init_buffer(void);
+ asmlinkage void __init start_kernel(void)
+ {
+ 	char * command_line;
+@@ -544,6 +546,8 @@ asmlinkage void __init start_kernel(void)
+ 	rcu_init();
+ 	radix_tree_init();
+ 	/* init some links before init_ISA_irqs() */
++	early_tracer_init_buffer();
++	event_trace_enable();
+ 	early_irq_init();
+ 	init_IRQ();
+ 	prio_tree_init();
+diff --git a/kernel/trace/ring_buffer.c b/kernel/trace/ring_buffer.c
+index 49491fa..3eff070 100644
+--- a/kernel/trace/ring_buffer.c
++++ b/kernel/trace/ring_buffer.c
+@@ -1212,6 +1212,140 @@ struct ring_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
+ }
+ EXPORT_SYMBOL_GPL(__ring_buffer_alloc);
+ 
++/* ---------- EARLY ---------- */
++#define EARLY_RING_BUFFER
++#ifdef EARLY_RING_BUFFER
++static struct ring_buffer early_buf;
++static struct ring_buffer_per_cpu* early_vec[1];
++static struct ring_buffer_per_cpu early_buf_cpu;
++static struct buffer_page early_bpage[3];
++
++void show_early_ring_buffer_init(struct ring_buffer *buffer)
++{
++	struct ring_buffer_per_cpu *buf;
++	long eb, e, c;
++
++	buf = buffer->buffers[0];
++
++	eb = local_read(&buf->entries_bytes);
++	e = local_read(&buf->entries);
++	c = local_read(&buf->commits);
++
++	printk("### bytes %ld, entries %ld, commits %ld\n", eb, e, c);
++}
++
++void ring_buffer_copy(struct ring_buffer *dst_buf, struct ring_buffer *src_buf)
++{
++	struct buffer_page *dst, *src;
++	struct ring_buffer_per_cpu *dst_cpubuf, *src_cpubuf;
++
++	dst_cpubuf = dst_buf->buffers[0];
++	src_cpubuf = src_buf->buffers[0];
++
++	dst = dst_buf->buffers[0]->tail_page;
++	src = src_buf->buffers[0]->tail_page;
++
++	/* the good stuff */
++	memcpy(dst->page, src->page, PAGE_SIZE);
++
++	local_set(&dst->write, local_read(&src->write));
++	local_set(&dst->entries, local_read(&src->entries));
++	dst->read = src->read;
++	dst->real_end = src->real_end;
++
++#if 0
++	dst = dst_buf->buffers[0]->head_page;
++	src = src_buf->buffers[0]->head_page;
++
++	/* the good stuff */
++	memcpy(dst->page, src->page, PAGE_SIZE);
++
++	local_set(&dst->write, local_read(&src->write));
++	local_set(&dst->entries, local_read(&src->entries));
++	dst->read = src->read;
++	dst->real_end = src->real_end;
++#endif
++
++	/* copy per_cpu stat fields */
++	local_set(&dst_cpubuf->entries_bytes,
++			local_read(&src_cpubuf->entries_bytes));
++	local_set(&dst_cpubuf->commit_overrun,
++			local_read(&src_cpubuf->commit_overrun));
++	local_set(&dst_cpubuf->overrun, local_read(&src_cpubuf->overrun));
++	local_set(&dst_cpubuf->entries, local_read(&src_cpubuf->entries));
++	local_set(&dst_cpubuf->committing, local_read(&src_cpubuf->committing));
++	local_set(&dst_cpubuf->commits, local_read(&src_cpubuf->commits));
++	dst_cpubuf->read = src_cpubuf->read;
++	dst_cpubuf->read_bytes = src_cpubuf->read_bytes;
++	dst_cpubuf->write_stamp = src_cpubuf->write_stamp;
++	dst_cpubuf->read_stamp = src_cpubuf->read_stamp;
++}
++
++struct ring_buffer *early_ring_buffer_init(unsigned flags)
++{
++	struct page *page;
++	LIST_HEAD(pages);
++
++	/* pages allocation */
++	/* TODO: I think reader page is not needed */
++	page = alloc_pages_node(cpu_to_node(0), GFP_KERNEL, 0);
++	early_bpage[0].page = page_address(page);
++
++	page = alloc_pages_node(cpu_to_node(0), GFP_KERNEL, 0);
++	early_bpage[1].page = page_address(page);
++	list_add(&early_bpage[1].list, &pages);
++
++	page = alloc_pages_node(cpu_to_node(0), GFP_KERNEL, 0);
++	early_bpage[2].page = page_address(page);
++	list_add(&early_bpage[2].list, &pages);
++
++	rb_init_page(early_bpage[0].page);
++	rb_init_page(early_bpage[1].page);
++	rb_init_page(early_bpage[2].page);
++
++	/* per cpu buffer initialization, only for cpu 0 */
++	early_buf_cpu.cpu = 0;
++	raw_spin_lock_init(&early_buf_cpu.reader_lock);
++	early_buf_cpu.lock = (arch_spinlock_t)__ARCH_SPIN_LOCK_UNLOCKED;
++	early_buf_cpu.reader_page = &early_bpage[0];
++	early_buf_cpu.buffer = &early_buf;
++
++	INIT_LIST_HEAD(&early_buf_cpu.reader_page->list);
++	INIT_LIST_HEAD(&early_buf_cpu.new_pages);
++
++	early_buf_cpu.pages = pages.next;
++	list_del(&pages);
++
++	early_buf_cpu.head_page =
++		list_entry(early_buf_cpu.pages, struct buffer_page, list);
++	early_buf_cpu.tail_page = early_buf_cpu.head_page;
++	early_buf_cpu.commit_page = early_buf_cpu.head_page;
++
++	rb_head_page_activate(&early_buf_cpu);
++
++	/* ring buffer struct initialization */
++	early_buf.flags = flags;
++	early_buf.clock = trace_clock_local;
++	early_buf.reader_lock_key = NULL;
++	early_buf.cpus = 1;
++	early_buf.buffers = early_vec;
++	early_buf.buffers[0] = &early_buf_cpu;
++
++	alloc_cpumask_var(&early_buf.cpumask, GFP_KERNEL);
++	cpumask_copy(early_buf.cpumask, cpu_possible_mask);
++	early_buf.cpus = nr_cpu_ids;
++
++	mutex_init(&early_buf.mutex);
++
++	return &early_buf;
++}
++#else
++struct ring_buffer *early_ring_buffer_init(unsigned flags)
++{
++	return NULL;
++}
++#endif
++
+ /**
+  * ring_buffer_free - free a ring buffer.
+  * @buffer: the buffer to free.
+diff --git a/kernel/trace/trace.c b/kernel/trace/trace.c
+index a120f98..dabbbb5 100644
+--- a/kernel/trace/trace.c
++++ b/kernel/trace/trace.c
+@@ -5073,6 +5073,25 @@ void ftrace_dump(enum ftrace_dump_mode oops_dump_mode)
+ }
+ EXPORT_SYMBOL_GPL(ftrace_dump);
+ 
++struct ring_buffer *early_ring_buffer_init(unsigned flags);
++void show_early_ring_buffer_init(struct ring_buffer *buffer);
++void ring_buffer_copy(struct ring_buffer *dst, struct ring_buffer *src);
++void early_tracer_init_buffer(void)
++{
++	enum ring_buffer_flags flags;
++	flags = trace_flags & TRACE_ITER_OVERWRITE ? RB_FL_OVERWRITE : 0;
++
++	global_trace.buffer = early_ring_buffer_init(flags);
++	global_trace.data[0] = &per_cpu(global_trace_cpu, 0);
++
++	set_buffer_entries(&global_trace,
++			   ring_buffer_size(global_trace.buffer, 0));
++
++	register_tracer(&nop_trace);
++	current_trace = &nop_trace;
++	tracing_disabled = 0;
++}
++
+ __init static int tracer_alloc_buffers(void)
+ {
+ 	int ring_buf_size;
+@@ -5080,6 +5099,8 @@ __init static int tracer_alloc_buffers(void)
+ 	int i;
+ 	int ret = -ENOMEM;
+ 
++	struct ring_buffer *prev_buf = global_trace.buffer;
++	show_early_ring_buffer_init(global_trace.buffer);
+ 
+ 	if (!alloc_cpumask_var(&tracing_buffer_mask, GFP_KERNEL))
+ 		goto out;
+@@ -5147,6 +5168,7 @@ __init static int tracer_alloc_buffers(void)
+ 
+ 	register_die_notifier(&trace_die_notifier);
+ 
++/*ring_buffer_copy(global_trace.buffer, prev_buf);*/
+ 	return 0;
+ 
+ out_free_cpumask:
+diff --git a/kernel/trace/trace_events.c b/kernel/trace/trace_events.c
+index 5bc1cd1..b94404e 100644
+--- a/kernel/trace/trace_events.c
++++ b/kernel/trace/trace_events.c
+@@ -1462,7 +1462,7 @@ static __init int setup_trace_event(char *str)
+ }
+ __setup("trace_event=", setup_trace_event);
+ 
+-static __init int event_trace_enable(void)
++__init int event_trace_enable(void)
+ {
+ 	struct ftrace_event_call **iter, *call;
+ 	char *buf = bootup_event_buf;
+@@ -1558,7 +1558,7 @@ static __init int event_trace_init(void)
+ 
+ 	return 0;
+ }
+-early_initcall(event_trace_enable);
++/*early_initcall(event_trace_enable);*/
+ fs_initcall(event_trace_init);
+ 
+ #ifdef CONFIG_FTRACE_STARTUP_TEST
+diff --git a/kernel/tracepoint.c b/kernel/tracepoint.c
+index d96ba22..a7f988f 100644
+--- a/kernel/tracepoint.c
++++ b/kernel/tracepoint.c
+@@ -102,7 +102,7 @@ static void debug_print_probes(struct tracepoint_entry *entry)
+ 		return;
+ 
+ 	for (i = 0; entry->funcs[i].func; i++)
+-		printk(KERN_DEBUG "Probe %d : %p\n", i, entry->funcs[i].func);
++		printk(KERN_DEBUG "Probe %d : %s %p\n", i, entry->name, entry->funcs[i].func);
+ }
+ 
+ static struct tracepoint_func *
