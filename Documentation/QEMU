@@ -1,0 +1,9 @@
+* For early output. Append "console=ttyS0" to kernel parameters. 
+
+* For file output: -serial stdio/ -serial file:AFILE
+
+* -nographic ?
+
+* -serial telnet / wait / nowait
+
+

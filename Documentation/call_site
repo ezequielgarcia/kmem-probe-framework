@@ -1,5 +1,5 @@
 
-Call sites  or The painstaking task of wrestling against gcc
+Call sites (or The painstaking task of wrestling against gcc)
 
 Compiler inlines *a lot* automatically and without warning.
 In this scenario, it's impossible to get *real* call site
@@ -39,5 +39,13 @@ index 8e4c0a7..23f1a88 100644
  KBUILD_CFLAGS_KERNEL :=
 ---
 
-Of course, this option makes kernel bigger and slower, 
+Of course, this option makes a bigger and slower kernel, 
 but this is an expected side-effect on a debug-only kernel.
+
+We must keep in mind that no matter what internal mechanisms we use to record call_site
+if they're based on __builtin_address, then their accuracy will depend entirely on
+gcc *not* inlining automatically.
+
+The enfasis is in the 'automatic' part. There will be lots of functions we will
+need to get inlined in order to determine the caller correctly.
+These will be marked as __always_inline.
