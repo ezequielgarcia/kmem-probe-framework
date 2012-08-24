@@ -1,7 +1,14 @@
+#!/bin/bash
+
+if [[ $UID -ne 0 ]]; then
+  echo "$0 must be run as root!"
+  exit 1
+fi
+
 # Mount probe fs and copy logs
 mount -o loop probefs.img ./probefs
 cp ./probefs/boot_kmem.log .
-cp ./probefs/boot_account.log .
+#cp ./probefs/boot_account .
 umount ./probefs
 
 # Post-process kmem events
