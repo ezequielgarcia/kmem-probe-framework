@@ -21,7 +21,7 @@ alternatives:
   I think it would be far more expensive.
 
 * Turn off gcc inlining using an options on kernel Makefile.
-  The options are: no-default-inline, no-inline, no-inline-small-functions.
+  The option is called no-inline-small-functions.
   It's still unclear which one is the right one, but it seems to be the latter.
   See this patch:
 
@@ -33,13 +33,13 @@ index 8e4c0a7..23f1a88 100644
                    -fno-strict-aliasing -fno-common \
                    -Werror-implicit-function-declaration \
                    -Wno-format-security \
-+                  -fno-default-inline -fno-inline -fno-inline-small-functions \
++                  -fno-inline-small-functions \
                    -fno-delete-null-pointer-checks
  KBUILD_AFLAGS_KERNEL :=
  KBUILD_CFLAGS_KERNEL :=
 ---
 
-Of course, this option makes a bigger and slower kernel, 
+Of course, this option makes a bit smaller and slower kernel, 
 but this is an expected side-effect on a debug-only kernel.
 
 We must keep in mind that no matter what internal mechanisms we use to record call_site

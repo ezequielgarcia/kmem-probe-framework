@@ -1,0 +1,243 @@
+
+On kernel memory accounting methods
+-----------------------------------
+
+1. Introduction. Kinds of memory.
+
+The kernel, being a computer program, can consume memory in two different ways:
+statically and dynamically.
+
+Static memory can be measured offline, therefore accounted before actually running the kernel
+using standard binary inspection utilites (readelf, objdump, size, etc).
+We will explore this utilities in detail.
+
+Dynamic memory cannot be measured offline, and it's not only necesarry to probe a running kernel
+but also to enable aditional probe code to trace each allocation.
+Fortunately for us, the linux community has recently developed a very powerful tracing framework
+that allows to trace general events, and in particular memory allocation events.
+We will explore this framework in detail.
+
+2. Static memory
+
+A compiled kernel will allocate static memory to store two kinds of symbols: code symbols (a.k.a text)
+and data symbols (a.k.a data).
+
+For instance, let's look at this piece of C code:
+
+  long curr;
+  int max = 10;
+
+  int foo(int var)
+  {
+      int i = var + max;
+      if (i < max)
+          curr = i;
+  }
+
+We have three different symbols:
+  * curr : a variable (data zero initialized)
+  * max  : an initialized variable (data non-zero initialized)
+  * foo  : a function (text)
+
+Once this code is running each of these symbols will need memory for its own storage.
+However, the zero initialized variable will not use space in the compiled binary.
+This is due to a special section inside the binary (called 'bss' for no good reason) 
+where all the zero initialized variables are placed. Since they carry no information,
+they need no space.
+Static variables have the same life as the executing program.
+
+On the other side, 'var' and 'i' variables are dynamically allocated, since they live in
+the stack. They are called 'automatic' variables, meaning that they have a life cycle 
+that's not under our control.
+
+Note that when we talk about 'static' memory, the word static has nothing to do
+with the C-language keyword. This keyword references a visibility class,
+where 'static' means 'local', as opposed to 'global'.
+
+2.1. The size command
+
+The most simple command to get a binary static size, is the wonderfully called 'size' command.
+Let's start by seeing it in action:
+
+$ size ./fs/ext2/ext2.o 
+   text	   data	    bss	    dec	    hex	filename
+  51273	     68	      8	  51349	   c895	./fs/ext2/ext2.o
+
+According to this output, this object file has roughly 50k bytes of text
+and 68 bytes of data.
+Now, 'size' comes in two flavors: 'berkeley' and 'sysv'. Each of this shows a different output.
+The default is 'berkeley', so the previous example was a 'berkeley' output.
+
+However, if we use the same command with 'sysv' output format, we'll find very different results:
+
+$ size --format=sysv ./fs/ext2/ext2.o 
+./fs/ext2/ext2.o  :
+section             size   addr
+.text              43005      0
+.init.text           138      0
+.exit.text            25      0
+.rodata             2304      0
+.rodata.str1.1      1656      0
+.rodata.str1.4      3485      0
+.data                 60      0
+.exitcall.exit         4      0
+.initcall6.init        4      0
+.bss                   8      0
+.note.GNU-stack        0      0
+.comment             675      0
+[...]
+
+Here we see a more detailed description about each section size.
+Note the appearence of a .rodata (read-only data) section, of 2k byte large.
+This section is composed of read-only variables (e.g. marked 'const') that
+are not accounted by the standard 'size' format.
+
+We can conclude that standard 'size' format gives an incomplete picture of 
+the compiled object.
+
+To add even more confusion to this picture, gcc can decide (at his own will) to put
+inside .rodata section symbols not marked as 'const'. These symbols are not written by anyone,
+and gcc considers them as read-only (pretty smart, uh?).
+This means you can have a .rodata section bigger than what you expected to have.
+
+This happens since gcc v4.7 (???)
+
+2.2 readelf and objdump
+
+This two commands can give us any information we need about a binary. In particular,
+they can output the complete list of symbols with detailed information about each one.
+Let's see an example of readelf on the same file we used for 'size'.
+The output is stripped for more clearance.
+
+$ readelf -s fs/ext2/ext2.o
+
+Symbol table '.symtab' contains 413 entries:
+   Num:    Value  Size Type    Bind   Vis      Ndx Name
+     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 00000000     0 SECTION LOCAL  DEFAULT    1 
+[...]
+   339: 00004da0   286 FUNC    GLOBAL DEFAULT    1 ext2_evict_inode
+   340: 000003e0    76 OBJECT  GLOBAL DEFAULT    7 ext2_nobh_aops
+   341: 00000780   128 OBJECT  GLOBAL DEFAULT    7 ext2_symlink_inode_operat
+   342: 000008d8    20 OBJECT  GLOBAL DEFAULT    7 ext2_xattr_acl_default_ha
+   343: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND generic_file_aio_write
+   344: 00000280   128 OBJECT  GLOBAL DEFAULT    7 ext2_file_inode_operation
+   345: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND __dquot_alloc_space
+   346: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND generic_setxattr
+   347: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND unlock_buffer
+   348: 000014c0    36 FUNC    GLOBAL DEFAULT    1 ext2_bg_num_gdb
+   349: 00005240   684 FUNC    GLOBAL DEFAULT    1 ext2_setattr
+[...]
+
+For instance, ext2_nobh_aops is an OBJECT symbol (data) of 76 bytes and
+ext2_evict_inode is a FUNC symbol (text) of 286 bytes.
+Notice there are some 'UND' symbols. They are undefined symbols for this file,
+that are defined elsewhere and therefore not of interest for us when inspecting a file size.
+
+Of course, this output can be combined with grep to get fantastic results.
+Let's count the numbers of defined functions:
+
+$ readelf -s fs/ext2/ext2.o | grep -v UND | grep FUNC
+
+With a little awk magic we could even sum these sizes and get the size of the .text section.
+
+objdump
+TODO:
+TODO:
+TODO:
+
+3. Dynamic
+
+Dynamic memory in kernel land is a little different from user land.
+
+In user land, all one needs to do to get a chunk of memory is call malloc().
+In kernel land, we have a similar function: kmalloc(). But we also have lots
+of other functions to alloc memory, and we must have some special considerations.
+
+The first thing it's important to understand is that kernel obtains memory 
+(well, in most architectures) on a fixed-size chunk, that we call a 'page' of memory.
+This page of memory tipically is 4096 bytes large, but this depends on the architecture.
+
+In order to delivery smaller pieces of memory, the kernel have a few couple of layers
+that ultimately lets you do kmalloc(100) and get 100 bytes. These layers are called:
+buddy allocator and slab allocator.
+
+We will focus on the latter. Slab allocator comes in three different flavors:
+SLAB, SLOB and SLUB. These funny names are historically, but the meaning is:
+
+* SLAB is the traditional
+* SLOB is aimed at tiny embedded systesm (e.g. without mmu)
+* SLUB is the default
+
+Each of these implement the allocation in a different way, but they all share a common
+property: internal fragmentation.
+
+3.1. Internal fragmentation
+
+For different reasons (alignment, overhead, etc) when we request 100 bytes with kmalloc(100)
+the slab allocator may really allocate 128 bytes (or 140 bytes, we can't really know).
+These extra 28 bytes can't be used, and therefore you are wasting them.
+This is called 'internal fragmentation', and one of the main goals of the slab allocator is
+to minimize it. In other words, trying to match as nearly as possible the requested size
+with the truly allocated size.
+
+3.2. Accounting with kmem events trace
+
+kmem events trace are a great source of information. By using them you can trace each kmalloc,
+getting the requested bytes, the allocated bytes, the caller address and the returned pointer.
+You can also trace kfree, getting the caller address and the freed pointer.
+
+Once you have the caller address you can use System.map file to get the caller function name.
+Also, by using the returned pointer and correlating with kfree traces you can keep track
+of currently used dynamic memory by each kernel function / subsystem.
+
+Let's see this in detail.
+
+3.2.1. Enabling and reading kmem trace 
+
+We can activate this on boot up with kernel parameter 'trace_event'. For instance, 
+'trace_event=kmem:kmalloc,kmem:kmem_cache_alloc,kmem:kfree,kmem:kmem_cache_free'
+
+or you can activate on-the-fly with: TODO, TODO, TODO.
+
+Once you have enabled events, you can run your favourite program (in order to trigger some
+allocations). When you're done you may disable events (or not) and read them:
+
+$ cat /sys/kernel/debug/tracing/trace > kmem.log
+
+Let's see a piece of this log:
+
+TODO
+TODO
+TODO
+
+This log can be post-processed. 
+For your convenience we have a script 'trace_analyze.py' that does exactly this (see below).
+
+3.2.2. About kmem trace events
+
+As we have seen there are a few more events than kmalloc and kfree. Let's see them all:
+
+* kmalloc
+  TODO
+
+* kfree
+  TODO
+
+* kmalloc_node
+  TODO
+
+* kmem_cache_alloc
+  TODO
+
+* kmem_cache_alloc_node
+  TODO
+
+* kmem_cache_free
+  TODO
+
+3.2.3. Using the trace_analyze.py post-processing script
+
+TODO
+TODO
+TODO
