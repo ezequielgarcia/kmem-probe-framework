@@ -26,7 +26,6 @@ def print_error(str):
 # returns function map (key=addr, value=funcname) and
 # a list of function tuples (addr, funcname)
 def read_map(filename):
-	global map_low, map_high
 	funcmap = {}
 	funclist = []
 	try:

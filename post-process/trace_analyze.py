@@ -8,6 +8,19 @@ import subprocess
 from optparse import OptionParser
 from os import path, walk
 from collections import defaultdict
+from visualize_mem_tree import visualize_mem_tree
+
+# global function map
+f = {}
+# global pointer map
+p = {}
+
+# global stats
+num_allocs = 0
+num_frees = 0
+num_lost_frees = 0
+total_alloc = 0
+total_req = 0
 
 class Ptr:
 	def __init__(self, fun, ptr, alloc, req):
@@ -37,6 +50,29 @@ class Callsite:
 			req += ptr.req
 		return req
 
+class MemTreeNodeSize:
+	def __init__(self, node):
+		self.static = 0
+		self.total_dynamic = 0
+		self.curr_dynamic = 0
+
+		for sym, size in node.data.items():
+			self.static += size
+		for sym, call in node.funcs.items():
+			self.total_dynamic += call.alloc
+			self.curr_dynamic += call.curr_alloc()
+	def net(self):
+		return self.static+self.total_dynamic+self.curr_dynamic
+
+#	def static(self):
+#		return self.static
+#
+#	def curr_dynamic(self):
+#		return self.curr_dynamic
+#
+#	def total_dynamic(self):
+#		return self.total_dynamic
+
 class MemTreeNode:
 	def __init__(self, name="", parent=None):
 		self.name = name
@@ -44,8 +80,9 @@ class MemTreeNode:
 		self.childs = {}
 		self.funcs = {}
 		self.data = {}
+		self.node_size = None
 
-	def fullName(self):
+	def full_name(self):
 		l = [self.name,]
 		parent = self.parent
 		while parent:
@@ -54,23 +91,59 @@ class MemTreeNode:
 
 		return "/".join(reversed(l))
 
+	def size(self):
+		if not self.node_size:
+			self.node_size = MemTreeNodeSize(self)
+		return self.node_size
+
+	def collapse(self):
+		# Collapse one-child empty nodes
+		for name, child in self.childs.items():
+			if len(child.childs) > 2:
+				child.collapse()
+
+			if len(child.childs) == 1 and not child.funcs and not child.data:
+				# Remove from child
+				(k, v) = child.childs.items()[0]
+				del child.childs[k]
+
+				# Add here
+				self.childs[k] = v
+				v.parent = self
+
+	def strip(self):
+		# Remove empty nodes
+		for name, child in self.childs.items():
+			if child.childs:
+				child.strip()
+			if not child.funcs and not child.data and not child.childs:
+				del self.childs[name]
+
+	def find_first_branch(self, which):
+		for name, node in self.childs.items():
+			if which == name:
+				return node
+
+		for name, node in self.childs.items():
+			return node.find_first_branch(which)
+
+		return None
+
 	def treelike(self, level=0):
 		str = ""
-		static_bytes = 0
-		dynamic_bytes = 0
-		for sym, size in self.data.items():
-			static_bytes += size
-		for sym, call in self.funcs.items():
-			dynamic_bytes += call.curr_alloc()
+		size = self.size()
 
 #		if not self.childs and (static_bytes+dynamic_bytes) == 0:
 #			return ""
 
 		if self.name:
-			str += "{} - static={} dyn={}\n".format(self.name, static_bytes, dynamic_bytes)
+			str += "{} - static={} dyn={} tot={}\n".format(self.name, 
+								self.size().static, 
+								self.size().curr_dynamic,
+								self.size().total_dynamic)
 
-		for n, i in self.funcs.items():
-			str += "{}{} - alloc={} req={}\n".format("  "*level, n, i.curr_alloc(), i.curr_req() )
+#		for n, i in self.funcs.items():
+#			str += "{}{} - total={} alloc={} req={}\n".format("  "*level, n, i.alloc, i.curr_alloc(), i.curr_req() )
 
 #		for n, i in self.data.items():
 #			str += "{}<D>{} - {}\n".format("  "*level, n, i )
@@ -78,60 +151,108 @@ class MemTreeNode:
 		for name, node in self.childs.items():
 			child_str = node.treelike(level+1)
 			if child_str:
-				str += "{}{}"	.format("  "*level, child_str)
+				str += "{}{}"	.format("  "*(level+1), child_str)
 		return str
 
-	# Updates static, total current and total dynamic
 	def fill(self):
 		global f
 
 		if self.funcs or self.data:
 			print 'Oooops, already filled'
+		filepath = "." + self.full_name() + "/built-in.o"
 
-		filepath = "." + self.fullName() + "/built-in.o"
-		p1 = subprocess.Popen(["readelf", "-s", filepath], stdout=subprocess.PIPE)
-		output = p1.communicate()[0].split("\n")
+		output = []
+		try:
+			p1 = subprocess.Popen(["readelf", "--wide", "-s", filepath], stdout=subprocess.PIPE)
+			output = p1.communicate()[0].split("\n")
+		except:
+			pass
+
 		for line in output:
 			if line == '':
 				continue
-			# strip trailing \n, if present
-			if line[-1]=='\n':
-				line = line[:-1]
-			tmp = line
-			m = re.match(r".*FUNC.*\b([a-zA-Z0-9_]+)\b", tmp)
+			m = re.match(r".*FUNC.*\b([a-zA-Z0-9_]+)\b", line)
 			if m:
 				if m.group(1) in self.funcs:
 					print "Duplicate entry! {}".format(m.group(1))
-	
+
 				if m.group(1) in f:
 					self.funcs[m.group(1)] = f[m.group(1)]
 
-			m = re.match(r".*([0-9]+)\sOBJECT.*\b([a-zA-Z0-9_]+)\b", tmp)
+			m = re.match(r".*([0-9]+)\sOBJECT.*\b([a-zA-Z0-9_]+)\b", line)
 			if m:
 				self.data[m.group(2)] = int(m.group(1))
 
-
 	# path is only dir, does not include built-in.o file
-	def addChildPath(self, path):
-		parts = path.split('/', 1)
+	def add_child(self, path):
+		# adding a child invalidates node_size object
+		self.node_size = None
 
+		parts = path.split('/', 1)
 		if len(parts) == 1:
 			self.fill()
 		else:
 			node, others = parts
 			if node not in self.childs:
 				self.childs[node] = MemTreeNode(node, self)
-			self.childs[node].addChildPath(others)
+			self.childs[node].add_child(others)
 
-f = {}
-p = {}
+class SymbolMap:
+	def __init__(self, filemap):
+		self.fmap = {}
+		self.flist = []
+		self.cache = {}
 
-num_allocs = 0
-num_frees = 0
-num_lost_frees = 0
-total_alloc = 0
-total_req = 0
+		try:
+			f = open(filemap)
+		except:
+			print("Error: Cannot read map file: %s" % filemap)
+			sys.exit(1)
 
+		for line in f.readlines():
+			(addr_str, symtype, name) = string.split(line, None, 3)
+			self.fmap[addr_str] = name
+			addr = eval("0x" + addr_str + "L")
+			self.flist.append((addr, name))
+
+		f.close()
+
+	def lookup(self, addr_str):
+
+		# return a tuple (string, offset) for a given address
+		if addr_str in self.fmap:
+			return (self.fmap[addr_str],0)
+
+		# convert address from string to number
+		addr = eval("0x" + addr_str + "L")
+		if addr in self.cache:
+			return self.cache[addr]
+
+		# if address is outside range of addresses in the
+		# map file, just return the address without converting it
+		if addr < self.flist[0][0] or addr > self.flist[-1][0]:
+			return (addr_str,0)
+	
+		# no exact match found, now do binary search for closest function
+		# do a binary search in funclist for the function
+		# use a collapsing range to find the closest addr
+		lower = 0
+		upper = len(self.flist)-1
+		while (lower != upper-1):
+			guess_index = lower + (upper-lower)/2
+			guess_addr = self.flist[guess_index][0]
+			if addr < guess_addr:
+				upper = guess_index
+			if addr >= guess_addr:
+				lower = guess_index
+		
+		offset = addr-self.flist[lower][0]
+		name = self.flist[lower][1]
+		if name.startswith("."):
+			name = name[1:]
+		self.cache[addr] = (name, offset)
+		return (name, offset)
+	
 def add_kmalloc_event(fun, offset, ptr, req, alloc):
 
 	global num_allocs, total_alloc, total_req
@@ -171,17 +292,6 @@ def add_kfree_event(fun, offset, ptr):
 	# Remove it from pointers dictionary
 	del p[ptr] 
 	
-def build_mem_tree(buildpath):
-
-	print "Reading symbols for built kernel at {} ...".format(buildpath)
-
-	tree = MemTreeNode()
-	for root, dirs, files in walk(buildpath):
-		for filepath in [path.join(root,f) for f in files]:
-			if filepath.endswith("built-in.o"):
-				tree.addChildPath(filepath)
-	return tree
-
 def print_statistics():
 
 	global f,p
@@ -224,41 +334,49 @@ def print_statistics():
 						  curr_alloc - curr_req,
 						  ptrs_count,
 						  fun))
+
 def main():
 
 	parser = OptionParser()
-	parser.add_option("-b", "--buildpath", dest="buildpath", default="linux",
+	parser.add_option("-b", "--build-path", dest="buildpath", default="linux",
         	          help="path to built kernel tree")
 
-	(options, args) = parser.parse_args()
+	(opts, args) = parser.parse_args()
+
+	print "Reading symbol map at {}...".format(opts.buildpath)
+	symbol = SymbolMap(opts.buildpath + "/System.map")
 
 	print "Reading event log ..."
-
 	for line in fileinput.input():
-		# strip trailing \n, if present
-		if line[-1]=='\n':
-			line = line[:-1]
 
-		# convert all hex numbers to symbols plus offsets
-		# try to preserve column spacing in the output
-		tmp = line
-		m = re.match(r".*kmalloc.*call_site=([a-zA-Z0-9_]+)\+0x([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)", tmp)
+		m = re.match(r".*kmalloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)", line)
 		if m:
-			add_kmalloc_event(m.group(1), 
+			(fun, offset) = symbol.lookup(m.group(1))
+			add_kmalloc_event(fun,
+					  offset,
 					  m.group(2),
-					  m.group(3),
-					  int(m.group(4)),
-					  int(m.group(5)))
+					  int(m.group(3)),
+					  int(m.group(4)))
 
-		m = re.match(r".*kfree.*call_site=([a-zA-Z0-9_+.]+)\+0x([a-f0-9]+).*ptr=([a-f0-9]+)", tmp)
+		m = re.match(r".*kfree.*call_site=([a-f0-9+]+).*ptr=([a-f0-9]+)", line)
 		if m:
-			add_kfree_event(m.group(1),
-					m.group(2),
-					m.group(3))
+			(fun, offset) = symbol.lookup(m.group(1))
+			add_kfree_event(fun,
+					offset,
+					m.group(2))
 
-	tree = build_mem_tree(options.buildpath)
+	print "Reading compiled symbols at {} ...".format(opts.buildpath)
+	tree = MemTreeNode("")
+	for root, dirs, files in walk(opts.buildpath):
+		for filepath in [path.join(root,f) for f in files]:
+			if filepath.endswith("built-in.o"):
+				tree.add_child(filepath)
 
-	print(tree.treelike())
+	tree.collapse()
+	tree.strip()
+	#print(tree.find_first_branch("linux").treelike())
+	visualize_mem_tree(tree.find_first_branch("linux"))
+	#print_statistics()
 
 if __name__ == "__main__":
 	main()
