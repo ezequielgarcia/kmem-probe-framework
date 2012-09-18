@@ -8,6 +8,14 @@ from optparse import OptionParser
 from os import path, walk
 from visualize_mem_tree import visualize_mem_tree
 
+kmalloc_re = r".*kmalloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)"
+kfree_re = r".*kfree.*call_site=[a-f0-9+]+.*ptr=([a-f0-9]+)"
+
+cache_alloc_re = r".*cache_alloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)"
+cache_free_re = r".*cache_free.*call_site=[a-f0-9+]+.*ptr=([a-f0-9]+)"
+
+both_alloc_re = r".*k.*alloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)"
+both_free_re = r".*k.*free.*call_site=[a-f0-9+]+.*ptr=([a-f0-9]+)"
 
 class Ptr:
     def __init__(self, fun, ptr, alloc, req):
@@ -18,13 +26,21 @@ class Ptr:
 
 
 class Callsite:
-    def __init__(self, offset):
-        self.offset = offset
-        self.alloc = 0
-        self.req = 0
-        self.alloc_count = 0
-        self.free_count = 0
+    def __init__(self):
+        self.__alloc = 0
+        self.__req = 0
+        self.__alloc_count = 0
+        self.__free_count = 0
         self.ptrs = []
+
+    def total_alloc(self):
+        return self.__alloc
+
+    def alloc_count(self):
+        return self.__alloc_count
+
+    def free_count(self):
+        return self.__free_count
 
     def curr_alloc(self):
         alloc = 0
@@ -37,6 +53,19 @@ class Callsite:
         for ptr in self.ptrs:
             req += ptr.req
         return req
+
+    def curr_waste(self):
+        return self.curr_alloc() - self.curr_req()
+
+    def alloc(self, alloc, req, ptr):
+        self.__alloc += alloc
+        self.__req += req
+        self.__alloc_count += 1
+        self.ptrs.append(ptr)
+
+    def free(self, ptr):
+        self.__free_count += 1
+        self.ptrs.remove(ptr)
 
 
 class EventDB:
@@ -57,7 +86,7 @@ class EventDB:
             req += callsite.curr_req()
         return (alloc, req)
 
-    def add_kmalloc(self, fun, offset, ptr, req, alloc):
+    def add_malloc(self, fun, ptr, req, alloc, line):
         self.num_allocs += 1
         self.total_alloc += alloc
         self.total_req += req
@@ -65,20 +94,16 @@ class EventDB:
         ptr_obj = Ptr(fun, ptr, alloc, req)
 
         if ptr in self.p:
-            print "Duplicate pointer! {}+0x{}, ptr={}".format(fun, offset, ptr)
+            print("Duplicate pointer! {}".format(line))
 
         self.p[ptr] = ptr_obj
 
         if not fun in self.f:
-            self.f[fun] = Callsite(offset)
+            self.f[fun] = Callsite()
 
-        self.f[fun].alloc += alloc
-        self.f[fun].req += req
-        self.f[fun].alloc_count += 1
-        self.f[fun].ptrs.append(ptr_obj)
+        self.f[fun].alloc(alloc, req, ptr_obj)
 
-    def add_kfree(self, ptr):
-
+    def add_free(self, ptr):
         self.num_frees += 1
 
         if not ptr in self.p:
@@ -86,55 +111,53 @@ class EventDB:
             return
 
         ptr_obj = self.p[ptr]
-        self.f[ptr_obj.fun].free_count += 1
 
-        # Remove this ptr from pointers list
-        self.f[ptr_obj.fun].ptrs.remove(ptr_obj)
+        self.f[ptr_obj.fun].free(ptr_obj)
+
         # Remove it from pointers dictionary
         del self.p[ptr]
 
     def print_stats(self):
+        pass
+
+    def print_account(self, filepath, order_by):
+
+        f = open(filepath, 'w')
+
         curr_alloc = 0
         curr_req = 0
         for fun, callsite in self.f.items():
             curr_alloc += callsite.curr_alloc()
             curr_req += callsite.curr_req()
 
-        print 'total bytes allocated: %8d' % self.total_alloc
-        print 'total bytes requested: %8d' % self.total_req
-        print 'total bytes wasted:    %8d' % (self.total_alloc - self.total_req)
-        print 'curr bytes allocated:  %8d' % curr_alloc
-        print 'curr bytes requested:  %8d' % curr_req
-        print 'curr wasted bytes:     %8d' % (curr_alloc - curr_req)
-        print 'number of allocs:      %8d' % self.num_allocs
-        print 'number of frees:       %8d' % self.num_frees
-        print 'number of lost frees:  %8d' % self.num_lost_frees
-        print 'number of callers:     %8d' % len(self.f)
-        print ''
-        print '   total      req    waste alloc/free  caller'
-        print '---------------------------------------------'
+        f.write("total bytes allocated: %8d\n" % self.total_alloc)
+        f.write("total bytes requested: %8d\n" % self.total_req)
+        f.write("total bytes wasted:    %8d\n" % (self.total_alloc -
+                                              self.total_req))
+        f.write("curr bytes allocated:  %8d\n" % curr_alloc)
+        f.write("curr bytes requested:  %8d\n" % curr_req)
+        f.write("curr wasted bytes:     %8d\n" % (curr_alloc - curr_req))
+        f.write("number of allocs:      %8d\n" % self.num_allocs)
+        f.write("number of frees:       %8d\n" % self.num_frees)
+        f.write("number of lost frees:  %8d\n" % self.num_lost_frees)
+        f.write("number of callers:     %8d\n" % len(self.f))
+        f.write("\n")
+        f.write("   total      slack    net alloc/free  caller\n")
+        f.write("---------------------------------------------\n")
 
-        for fun, callsite in self.f.items():
-            print('%8d %8d %8d %5d/%-5d %s' % (callsite.alloc,
-                                               callsite.req,
-                                               callsite.alloc - callsite.req,
-                                               callsite.alloc_count,
-                                               callsite.free_count,
+        for fun, callsite in sorted(self.f.items(),
+                                    key=lambda item: getattr(item[1],
+                                                             order_by)(),
+                                    reverse=True):
+
+            f.write("%8d %8d %8d %5d/%-5d %s\n" % (callsite.total_alloc(),
+                                               callsite.curr_waste(),
+                                               callsite.curr_alloc(),
+                                               callsite.alloc_count(),
+                                               callsite.free_count(),
                                                fun))
-        print ''
-        print ' current      req    waste    ptrs     caller'
-        print '---------------------------------------------'
 
-        for fun, callsite in self.f.items():
-            curr_alloc = callsite.curr_alloc()
-            curr_req = callsite.curr_req()
-            ptrs_count = len(callsite.ptrs)
-
-            print('%8d %8d %8d %7d     %s' % (curr_alloc,
-                                              curr_req,
-                                              curr_alloc - curr_req,
-                                              ptrs_count,
-                                              fun))
+        f.close()
 
 
 class MemTreeNodeSize:
@@ -147,7 +170,7 @@ class MemTreeNodeSize:
         for sym, size in node.data.items():
             self.__static += size
         for sym, call in node.funcs.items():
-            self.__total_dynamic += call.alloc
+            self.__total_dynamic += call.total_alloc()
             self.__curr_dynamic += call.curr_alloc()
             self.__waste += call.curr_alloc() - call.curr_req()
 
@@ -346,7 +369,7 @@ class SymbolMap:
             if addr >= guess_addr:
                 lower = guess_index
 
-        offset = addr-self.flist[lower][0]
+        offset = hex(addr-self.flist[lower][0])
         name = self.flist[lower][1]
         if name.startswith("."):
             name = name[1:]
@@ -383,10 +406,25 @@ def main():
                       action="store_true",
                       help="plot ringchart information")
 
-    parser.add_option("-s", "--with-stats",
+    parser.add_option("--with-stats",
                       dest="with_stats",
                       action="store_true",
-                      help="print accounting like statistics")
+                      help="print statistics")
+
+    parser.add_option("--malloc",
+                      dest="do_malloc",
+                      action="store_true",
+                      help="trace kmalloc/kfree only")
+
+    parser.add_option("--cache",
+                      dest="do_cache",
+                      action="store_true",
+                      help="trace kmem_cache_alloc/kmem_cache_free only")
+
+    parser.add_option("--account-file",
+                      dest="account_file",
+                      default="",
+                      help="show output matching slab_account output")
 
     (opts, args) = parser.parse_args()
 
@@ -400,27 +438,41 @@ def main():
     if opts.with_stats is None:
         opts.with_stats = False
 
+    if opts.do_malloc is True and opts.do_cache is None:
+        print "Filtering kmalloc events only ..."
+        alloc_re = kmalloc_re
+        free_re = kfree_re
+
+    elif opts.do_malloc is None and opts.do_cache is True:
+        print "Filtering kmem_cache events only ..."
+        alloc_re = cache_alloc_re
+        free_re = cache_free_re
+
+    else:
+        print "Filtering all ..."
+        alloc_re = both_alloc_re
+        free_re = both_free_re
+
     print "Reading symbol map at {}...".format(opts.buildpath)
     symbol = SymbolMap(opts.buildpath + "/System.map")
 
     rootDB = EventDB()
 
-    print "Reading event log ..."
-    logfile = open(opts.file, 'r')
+    print "Slurping event log ..."
+    logfile = open(opts.file)
     for line in logfile:
 
-        m = re.match(r".*kmalloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)", line)
+        m = re.match(alloc_re, line)
         if m:
             (fun, offset) = symbol.lookup(m.group(1))
-            rootDB.add_kmalloc(fun,
-                               offset,
-                               m.group(2),
-                               int(m.group(3)),
-                               int(m.group(4)))
+            rootDB.add_malloc(fun, #"{}+{}".format(fun,offset),
+                              m.group(2),
+                              int(m.group(3)),
+                              int(m.group(4)), line)
 
-        m = re.match(r".*kfree.*call_site=[a-f0-9+]+.*ptr=([a-f0-9]+)", line)
+        m = re.match(free_re, line)
         if m:
-            rootDB.add_kfree(m.group(1))
+            rootDB.add_free(m.group(1))
 
     print "Creating tree from compiled symbols at {} ...".format(opts.buildpath)
     tree = MemTreeNode("", db=rootDB)
@@ -434,6 +486,9 @@ def main():
     tree.strip()
 
     print(tree.find_first_branch(opts.start_branch).treelike())
+
+    if len(opts.account_file) != 0:
+        rootDB.print_account(opts.account_file, "curr_waste")
 
     if opts.with_stats:
         rootDB.print_stats()
