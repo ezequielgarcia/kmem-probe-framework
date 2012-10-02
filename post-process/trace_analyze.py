@@ -240,7 +240,8 @@ class MemTreeNode:
         l = [self.name,]
         parent = self.parent
         while parent:
-            l.append(parent.name)
+            if parent.name != "":
+                l.append(parent.name)
             parent = parent.parent
 
         return "/".join(reversed(l))
@@ -250,7 +251,7 @@ class MemTreeNode:
             self.node_size = MemTreeNodeSize(self)
         return self.node_size
 
-    def collapse(self):
+    def __collapse(self):
         # Collapse one-child empty nodes
         for name, child in self.childs.items():
             if len(child.childs) > 2:
@@ -265,13 +266,26 @@ class MemTreeNode:
                 self.childs[k] = v
                 v.parent = self
 
-    def strip(self):
+    def __strip(self):
         # Remove empty nodes
         for name, child in self.childs.items():
             if child.childs:
-                child.strip()
+                child.__strip()
             if not child.funcs and not child.data and not child.childs:
                 del self.childs[name]
+
+    def __get_root(self):
+        if len(self.name) == 0:
+            if len(self.childs) == 1:
+                child = self.childs.itervalues().next()
+                return child.__get_root()
+
+        return self
+
+    def get_clean(self):
+        self.__collapse()
+        self.__strip()
+        return self.__get_root()
 
     def find_first_branch(self, which):
         for name, node in self.childs.items():
@@ -285,6 +299,15 @@ class MemTreeNode:
 
     def treelike(self, level=0, attr="current_dynamic"):
         str = ""
+        str += "{}\n".format(self.name)
+        for name, node in self.childs.items():
+            child_str = node.treelike(level+1, attr)
+            if child_str:
+                str += "{}{}".format("  "*(level+1), child_str)
+        return str
+
+    def treelike2(self, level=0, attr="current_dynamic"):
+        str = ""
 
         attr_val = getattr(self.size(), attr)()
 
@@ -294,12 +317,12 @@ class MemTreeNode:
         for name, node in self.childs.items():
             child_str = node.treelike(level+1, attr)
             if child_str:
-                str += "{}{}"   .format("  "*(level+1), child_str)
+                str += "{}{}".format("  "*(level+1), child_str)
         return str
 
     def fill_per_file(self, path):
 
-        filepath = "./{}/{}".format(self.full_name(), path)
+        filepath = "{}/{}".format(self.full_name(), path)
 
         if path not in self.childs:
             self.childs[path] = MemTreeNode(path, self)
@@ -436,9 +459,9 @@ class SymbolMap:
 def main():
 
     parser = OptionParser()
-    parser.add_option("-k", "--kernel-path",
+    parser.add_option("-k", "--kernel",
                       dest="buildpath",
-                      default="linux",
+                      default="",
                       help="path to built kernel tree")
 
     parser.add_option("-a", "--attr",
@@ -484,14 +507,29 @@ def main():
 
     (opts, args) = parser.parse_args()
 
+    # Kernel build path is a mandatory parameter.
+    # We need to look at compiled objects and also for System.map.
+    if opts.buildpath == "":
+        print "Please set a kernel build path!"
+        parser.print_help()
+        return
+
+    # Clean user provided kernel path from dirty slashes
+    opts.buildpath = opts.buildpath.rstrip("/")
+
+    # If we don't have a trace log file,
+    # then we'll fallback to static report mode.
     if len(opts.file) == 0:
-        print "No trace log file: will report on static size!"
+        print "No trace log file specified: will report on static size only"
         opts.attr = "static"
         opts.do_malloc = False
         opts.do_cache = False
         opts.account_file = ""
         opts.with_chart = True
         opts.with_stats = False
+        opts.just_static = True
+    else:
+        opts.just_static = False
 
     if opts.with_chart is None:
         opts.with_chart = False
@@ -500,30 +538,28 @@ def main():
         opts.with_stats = False
 
     if opts.do_malloc is True and opts.do_cache is None:
-        print "Filtering kmalloc events only ..."
+        print "Filtering kmalloc events only"
         alloc_re = kmalloc_re
         free_re = kfree_re
 
     elif opts.do_malloc is None and opts.do_cache is True:
-        print "Filtering kmem_cache events only ..."
+        print "Filtering kmem_cache events only"
         alloc_re = cache_alloc_re
         free_re = cache_free_re
 
-    elif len(opts.file) == 0:
-        pass
-
     else:
-        print "Filtering all ..."
-        alloc_re = both_alloc_re
-        free_re = both_free_re
+        if not opts.just_static:
+            print "Filtering all"
+            alloc_re = both_alloc_re
+            free_re = both_free_re
 
-    print "Reading symbol map at {}...".format(opts.buildpath)
+    print "Reading symbol map at {}".format(opts.buildpath)
     symbol = SymbolMap(opts.buildpath + "/System.map")
 
     rootDB = EventDB()
 
-    if len(opts.file) > 0:
-        print "Slurping event log ..."
+    if not opts.just_static:
+        print "Slurping event log"
         logfile = open(opts.file)
         for line in logfile:
 
@@ -539,11 +575,22 @@ def main():
             if m:
                 rootDB.add_free(m.group(1))
 
-    root_path = "{}/{}".format(opts.buildpath, opts.start_branch)
+    root_path = "{}/{}".format(opts.buildpath, opts.start_branch).rstrip("/")
 
-    print "Creating tree from compiled symbols at {} ...".format(root_path)
-    tree = MemTreeNode(name = "", db = rootDB)
+    blacklist = ("scripts", "tools")
+
+    print "Creating tree from compiled symbols at {}".format(root_path)
+    tree = MemTreeNode(db = rootDB)
     for root, dirs, files in walk(root_path):
+
+        do_blacklist = False
+        for bdir in blacklist:
+            if root.startswith("{}/{}".format(root_path, bdir)):
+                do_blacklist = True
+
+        if do_blacklist:
+            continue
+
         for filepath in [path.join(root,f) for f in files]:
             if filepath.endswith(".o") and \
                 filepath.endswith("built-in.o") == False and \
@@ -553,14 +600,13 @@ def main():
 #                filepath.endswith("vmlinux.o") == False:
 #                tree.add_child(filepath)
 
-    print "Cleaning tree ..."
-    tree.collapse()
-    tree.strip()
+    print "Cleaning tree"
+    tree = tree.get_clean()
 
     print(tree.treelike(attr = opts.attr))
 
     if len(opts.account_file) != 0:
-        print "Creating account file at {} ...".format(opts.account_file)
+        print "Creating account file at {}".format(opts.account_file)
         rootDB.print_account(opts.account_file,
                              opts.attr,
                              tree)
@@ -569,14 +615,13 @@ def main():
         rootDB.print_stats()
 
     if opts.with_chart:
-        filename = opts.start_branch
-        if len(filename) == 0:
-            filename = "linux"
+        filename = "linux"
+        if len(opts.start_branch) != 0:
+            filename = opts.start_branch
+            tree = tree.find_first_branch(opts.start_branch)
 
-        print "Creating ringchart file at {}.png ...".format(filename)
-        visualize_mem_tree(tree = tree.find_first_branch(opts.start_branch),
-                           attr = opts.attr,
-                           filename = filename)
+        print "Creating ringchart file at {}.png".format(filename)
+        visualize_mem_tree(tree, opts.attr, filename)
 
 if __name__ == "__main__":
     main()

@@ -140,7 +140,7 @@ def visualize_mem_tree(tree, attr="static", filename="ringchart"):
     RING_MIN_WIDTH = 1
     TEXT_MIN_WIDTH = 5
 
-    rings = create_rings(tree, level=1, size_attr=attr)
+    rings = create_rings(tree, level=2, size_attr=attr)
 
     fig = pylab.figure()
     ax = fig.add_subplot(111)
