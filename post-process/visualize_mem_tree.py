@@ -68,6 +68,10 @@ def ring_color(start_angle, level):
         # f:      [1 - 0.26]
         # rel:    [0 - 198]
         # icolor: [0 - 5]
+
+#        if level == 1:
+#            return colorConverter.to_rgb('#808080')
+
         f = 1 - (((level-1) * 0.3) / 8)
         rel = start_angle / 180. * 99
 
@@ -136,9 +140,7 @@ def visualize_mem_tree(tree, attr="static", filename="ringchart"):
     RING_MIN_WIDTH = 1
     TEXT_MIN_WIDTH = 5
 
-    print "[Visualize] Showing {} info. Ring root is at {}".format(attr,
-                                                                   tree.full_name())
-    rings = create_rings(tree, level=2, size_attr=attr)
+    rings = create_rings(tree, level=1, size_attr=attr)
 
     fig = pylab.figure()
     ax = fig.add_subplot(111)
@@ -178,11 +180,11 @@ def visualize_mem_tree(tree, attr="static", filename="ringchart"):
         annotations.append(ann)
 
     (alloc, req) = tree.db.get_bytes()
-    txt = "Current {}\nWasted {}\nYou're wasting {}%\n".format(
-                    human_bytes(alloc),
-                    human_bytes(alloc - req),
-                    human_bytes((alloc - req) * 100.0 / alloc))
-
+    #txt = "Current {}\nWasted {}\nYou're wasting {}%\n".format(
+    #                human_bytes(alloc),
+    #                human_bytes(alloc - req),
+    #                human_bytes((alloc - req) * 100.0 / alloc))
+    #
     #ax.annotate(txt,
     #            xy=(-0.05, 0.8), xycoords='axes fraction',
     #            fontsize=15, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9))

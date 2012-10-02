@@ -33,7 +33,7 @@ class Callsite:
         self.__free_count = 0
         self.ptrs = []
 
-    def total_alloc(self):
+    def total_dynamic(self):
         return self.__alloc
 
     def alloc_count(self):
@@ -42,20 +42,20 @@ class Callsite:
     def free_count(self):
         return self.__free_count
 
-    def curr_alloc(self):
+    def current_dynamic(self):
         alloc = 0
         for ptr in self.ptrs:
             alloc += ptr.alloc
         return alloc
 
-    def curr_req(self):
+    def current_req(self):
         req = 0
         for ptr in self.ptrs:
             req += ptr.req
         return req
 
-    def curr_waste(self):
-        return self.curr_alloc() - self.curr_req()
+    def waste(self):
+        return self.current_dynamic() - self.current_req()
 
     def alloc(self, alloc, req, ptr):
         self.__alloc += alloc
@@ -73,7 +73,7 @@ class EventDB:
         self.f = {}
         self.p = {}
         self.num_allocs = 0
-        self.total_alloc = 0
+        self.total_dynamic = 0
         self.total_req = 0
         self.num_frees = 0
         self.num_lost_frees = 0
@@ -82,13 +82,13 @@ class EventDB:
         alloc = 0
         req = 0
         for fun, callsite in self.f.items():
-            alloc += callsite.curr_alloc()
-            req += callsite.curr_req()
+            alloc += callsite.current_dynamic()
+            req += callsite.current_req()
         return (alloc, req)
 
     def add_malloc(self, fun, ptr, req, alloc, line):
         self.num_allocs += 1
-        self.total_alloc += alloc
+        self.total_dynamic += alloc
         self.total_req += req
 
         ptr_obj = Ptr(fun, ptr, alloc, req)
@@ -120,39 +120,47 @@ class EventDB:
     def print_stats(self):
         pass
 
-    def print_account(self, filepath, order_by):
+    def print_account(self, filepath, order_by, filter_tree=None):
+
+        current_dynamic = 0
+        current_req = 0
+        alloc_count = 0
+        free_count = 0
+
+        if filter_tree is None:
+            filter_symbol = lambda f: True
+        else:
+            filter_symbol = filter_tree.symbol_is_here
+
+        syms = [(f,c) for f,c in self.f.items() if filter_symbol(f)]
 
         f = open(filepath, 'w')
 
-        curr_alloc = 0
-        curr_req = 0
-        for fun, callsite in self.f.items():
-            curr_alloc += callsite.curr_alloc()
-            curr_req += callsite.curr_req()
+        for fun, callsite in syms:
+            current_dynamic += callsite.current_dynamic()
+            current_req += callsite.current_req()
+            alloc_count += callsite.alloc_count()
+            free_count += callsite.free_count()
 
-        f.write("total bytes allocated: %8d\n" % self.total_alloc)
-        f.write("total bytes requested: %8d\n" % self.total_req)
-        f.write("total bytes wasted:    %8d\n" % (self.total_alloc -
-                                              self.total_req))
-        f.write("curr bytes allocated:  %8d\n" % curr_alloc)
-        f.write("curr bytes requested:  %8d\n" % curr_req)
-        f.write("curr wasted bytes:     %8d\n" % (curr_alloc - curr_req))
-        f.write("number of allocs:      %8d\n" % self.num_allocs)
-        f.write("number of frees:       %8d\n" % self.num_frees)
-        f.write("number of lost frees:  %8d\n" % self.num_lost_frees)
-        f.write("number of callers:     %8d\n" % len(self.f))
+        f.write("current bytes allocated: {:>10}\n".format(current_dynamic))
+        f.write("current bytes requested: {:>10}\n".format(current_req))
+        f.write("current wasted bytes:    {:>10}\n".format((current_dynamic -
+                                                         current_req)))
+        f.write("number of allocs:        {:>10}\n".format(alloc_count))
+        f.write("number of frees:         {:>10}\n".format(free_count))
+        f.write("number of callers:       {:>10}\n".format(len(syms)))
         f.write("\n")
-        f.write("   total      slack    net alloc/free  caller\n")
+        f.write("   total    waste      net alloc/free  caller\n")
         f.write("---------------------------------------------\n")
 
-        for fun, callsite in sorted(self.f.items(),
+        for fun, callsite in sorted(syms,
                                     key=lambda item: getattr(item[1],
                                                              order_by)(),
                                     reverse=True):
 
-            f.write("%8d %8d %8d %5d/%-5d %s\n" % (callsite.total_alloc(),
-                                               callsite.curr_waste(),
-                                               callsite.curr_alloc(),
+            f.write("%8d %8d %8d %5d/%-5d %s\n" % (callsite.total_dynamic(),
+                                               callsite.waste(),
+                                               callsite.current_dynamic(),
                                                callsite.alloc_count(),
                                                callsite.free_count(),
                                                fun))
@@ -164,18 +172,30 @@ class MemTreeNodeSize:
     def __init__(self, node):
         self.__static = 0
         self.__total_dynamic = 0
-        self.__curr_dynamic = 0
+        self.__current_dynamic = 0
         self.__waste = 0
 
+        # First for my symbols
         for sym, size in node.data.items():
             self.__static += size
+        for sym, size in node.text.items():
+            self.__static += size
         for sym, call in node.funcs.items():
-            self.__total_dynamic += call.total_alloc()
-            self.__curr_dynamic += call.curr_alloc()
-            self.__waste += call.curr_alloc() - call.curr_req()
+            self.__total_dynamic += call.total_dynamic()
+            self.__current_dynamic += call.current_dynamic()
+            self.__waste += call.current_dynamic() - call.current_req()
+
+        # Now, for my children's symbols.
+        # Or, instead, we could first add all my children's
+        # symbols here and then get the node size.
+        for name, child in node.childs.items():
+            self.__total_dynamic += child.size().total_dynamic()
+            self.__current_dynamic += child.size().current_dynamic()
+            self.__static += child.size().static()
+            self.__waste += child.size().waste()
 
     def current(self):
-        return self.__static + self.__curr_dynamic
+        return self.__static + self.__current_dynamic
 
     def waste(self):
         return self.__waste
@@ -184,7 +204,7 @@ class MemTreeNodeSize:
         return self.__static
 
     def current_dynamic(self):
-        return self.__curr_dynamic
+        return self.__current_dynamic
 
     def total_dynamic(self):
         return self.__total_dynamic
@@ -197,13 +217,24 @@ class MemTreeNode:
         self.childs = {}
         self.funcs = {}
         self.data = {}
+        self.text = {}
         self.node_size = None
+        self.fill = getattr(self, "fill_per_file")
 
         if db is None:
             if parent is not None:
                 self.db = parent.db
         else:
             self.db = db
+
+    def symbol_is_here(self, symbol):
+        if symbol in self.funcs:
+            return True
+        else:
+            for name, child in self.childs.items():
+                if child.symbol_is_here(symbol):
+                    return True
+        return False
 
     def full_name(self):
         l = [self.name,]
@@ -252,31 +283,56 @@ class MemTreeNode:
 
         return None
 
-    def treelike(self, level=0):
+    def treelike(self, level=0, attr="current_dynamic"):
         str = ""
 
-#       if not self.childs and (static_bytes+dynamic_bytes) == 0:
-#           return ""
+        attr_val = getattr(self.size(), attr)()
 
-        if self.name:
-            str += "{} - static={} dyn={} tot={}\n".format(self.name,
-                                                           self.size().static(),
-                                                           self.size().current_dynamic(),
-                                                           self.size().total_dynamic())
-
-#       for n, i in self.funcs.items():
-#           str += "{}{} - total={} alloc={} req={}\n".format("  "*level, n, i.alloc, i.curr_alloc(), i.curr_req() )
-
-#       for n, i in self.data.items():
-#           str += "{}<D>{} - {}\n".format("  "*level, n, i )
+        if self.name and attr_val != 0:
+            str += "{} - {}={}\n".format(self.name, attr, attr_val)
 
         for name, node in self.childs.items():
-            child_str = node.treelike(level+1)
+            child_str = node.treelike(level+1, attr)
             if child_str:
                 str += "{}{}"   .format("  "*(level+1), child_str)
         return str
 
-    def fill(self):
+    def fill_per_file(self, path):
+
+        filepath = "./{}/{}".format(self.full_name(), path)
+
+        if path not in self.childs:
+            self.childs[path] = MemTreeNode(path, self)
+
+        child = self.childs[path]
+
+        output = []
+        try:
+            p1 = subprocess.Popen(["readelf", "--wide", "-s", filepath], stdout=subprocess.PIPE)
+            output = p1.communicate()[0].split("\n")
+        except:
+            pass
+
+        for line in output:
+            if line == '':
+                continue
+
+            m = re.match(r".*\s([0-9]+)\sFUNC.*\s+([a-zA-Z0-9_\.]+)\b", line)
+            if m:
+                if m.group(2) in child.text:
+                    print "Duplicate text entry! {}".format(m.group(2))
+                child.text[m.group(2)] = int(m.group(1))
+
+                if m.group(2) in child.db.f:
+                    child.funcs[m.group(2)] = child.db.f[m.group(2)]
+
+            m = re.match(r".*\s([0-9]+)\sOBJECT.*\s+([a-zA-Z0-9_\.]+)\b", line)
+            if m:
+                if m.group(2) in child.data:
+                    print "Duplicate data entry! {}".format(m.group(2))
+                child.data[m.group(2)] = int(m.group(1))
+
+    def fill_per_dir(self, path):
 
         if self.funcs or self.data:
             print "Oooops, already filled"
@@ -305,14 +361,14 @@ class MemTreeNode:
             if m:
                 self.data[m.group(2)] = int(m.group(1))
 
-    # path is only dir, does not include built-in.o file
+    # path is should be an object file, like fs/ext2/inode.o
     def add_child(self, path):
         # adding a child invalidates node_size object
         self.node_size = None
 
         parts = path.split('/', 1)
         if len(parts) == 1:
-            self.fill()
+            self.fill(path)
         else:
             node, others = parts
             if node not in self.childs:
@@ -398,7 +454,7 @@ def main():
 
     parser.add_option("-b", "--start-branch",
                       dest="start_branch",
-                      default="linux",
+                      default="",
                       help="first directory name to use as ringchart root")
 
     parser.add_option("-r", "--with-chart",
@@ -429,8 +485,13 @@ def main():
     (opts, args) = parser.parse_args()
 
     if len(opts.file) == 0:
-        print "I need a trace log file!"
-        return
+        print "No trace log file: will report on static size!"
+        opts.attr = "static"
+        opts.do_malloc = False
+        opts.do_cache = False
+        opts.account_file = ""
+        opts.with_chart = True
+        opts.with_stats = False
 
     if opts.with_chart is None:
         opts.with_chart = False
@@ -448,6 +509,9 @@ def main():
         alloc_re = cache_alloc_re
         free_re = cache_free_re
 
+    elif len(opts.file) == 0:
+        pass
+
     else:
         print "Filtering all ..."
         alloc_re = both_alloc_re
@@ -458,45 +522,61 @@ def main():
 
     rootDB = EventDB()
 
-    print "Slurping event log ..."
-    logfile = open(opts.file)
-    for line in logfile:
+    if len(opts.file) > 0:
+        print "Slurping event log ..."
+        logfile = open(opts.file)
+        for line in logfile:
 
-        m = re.match(alloc_re, line)
-        if m:
-            (fun, offset) = symbol.lookup(m.group(1))
-            rootDB.add_malloc(fun, #"{}+{}".format(fun,offset),
-                              m.group(2),
-                              int(m.group(3)),
-                              int(m.group(4)), line)
+            m = re.match(alloc_re, line)
+            if m:
+                (fun, offset) = symbol.lookup(m.group(1))
+                rootDB.add_malloc(fun, #"{}+{}".format(fun,offset),
+                                  m.group(2),
+                                  int(m.group(3)),
+                                  int(m.group(4)), line)
 
-        m = re.match(free_re, line)
-        if m:
-            rootDB.add_free(m.group(1))
+            m = re.match(free_re, line)
+            if m:
+                rootDB.add_free(m.group(1))
 
-    print "Creating tree from compiled symbols at {} ...".format(opts.buildpath)
-    tree = MemTreeNode("", db=rootDB)
-    for root, dirs, files in walk(opts.buildpath):
+    root_path = "{}/{}".format(opts.buildpath, opts.start_branch)
+
+    print "Creating tree from compiled symbols at {} ...".format(root_path)
+    tree = MemTreeNode(name = "", db = rootDB)
+    for root, dirs, files in walk(root_path):
         for filepath in [path.join(root,f) for f in files]:
-            if filepath.endswith("built-in.o"):
+            if filepath.endswith(".o") and \
+                filepath.endswith("built-in.o") == False and \
+                filepath.endswith("vmlinux.o") == False:
                 tree.add_child(filepath)
+#            if filepath.endswith("built-in.o") and \
+#                filepath.endswith("vmlinux.o") == False:
+#                tree.add_child(filepath)
 
     print "Cleaning tree ..."
     tree.collapse()
     tree.strip()
 
-    print(tree.find_first_branch(opts.start_branch).treelike())
+    print(tree.treelike(attr = opts.attr))
 
     if len(opts.account_file) != 0:
-        rootDB.print_account(opts.account_file, "curr_waste")
+        print "Creating account file at {} ...".format(opts.account_file)
+        rootDB.print_account(opts.account_file,
+                             opts.attr,
+                             tree)
 
     if opts.with_stats:
         rootDB.print_stats()
 
     if opts.with_chart:
-        visualize_mem_tree(tree.find_first_branch(opts.start_branch),
-                           attr=opts.attr,
-                           filename=opts.start_branch)
+        filename = opts.start_branch
+        if len(filename) == 0:
+            filename = "linux"
+
+        print "Creating ringchart file at {}.png ...".format(filename)
+        visualize_mem_tree(tree = tree.find_first_branch(opts.start_branch),
+                           attr = opts.attr,
+                           filename = filename)
 
 if __name__ == "__main__":
     main()
