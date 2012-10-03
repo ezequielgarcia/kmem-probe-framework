@@ -1,0 +1,47 @@
+
+Using trace_analyze.py for static reporting
+-------------------------------------------
+
+trace_analyze.py typically needs access to: 
+i) a built kernel tree and ii) an ftrace kmem log.
+
+However, if one lacks the latter but can provide a built
+kernel tree, the script will fallback to 'static' analysis.
+
+1. Using it
+
+Usage is fairly simple
+
+  $ ./trace_analyze.py -k /usr/src/linux
+  $ ./trace_analyze.py --kernel /usr/src/linux
+
+This should produce a ringchart png file in the current directory,
+named linux.png.
+
+Of course, you can use absolute and relative paths in that parameter
+
+  $ ./trace_analyze.py -k ./torvalds
+
+If you're interested in a specific subsystem you can use a parameter to specify
+the directory tree branch to take as root
+
+  $ ./trace_analyze -k ./torvalds -b fs
+  $ ./trace_analyze -k ./torvalds -b drivers
+  $ ./trace_analyze -k ./torvalds -b mm
+
+Each of this commands will produce a ringchart png file in the
+curent directory, named as the specified branch (fs.png, drivers.png, mm.png, etc).
+
+2. Under the hood
+
+The script will perform a directory walk, internally creating a tree matching
+the provided kernel tree. On each object file found (like fs/inode.o) it will
+perform a 'readelf --syms' to get a list of symbols contained in it.
+
+Nothing fancy.
+
+3. Pitfalls. Corner cases.
+
+4. TODO
+
+ * Account for minor differences between running 'size' and using this script
