@@ -116,9 +116,6 @@ class EventDB:
         # Remove it from pointers dictionary
         del self.p[ptr]
 
-    def print_stats(self):
-        pass
-
     def print_account(self, filepath, order_by, filter_tree=None):
 
         current_dynamic = 0
