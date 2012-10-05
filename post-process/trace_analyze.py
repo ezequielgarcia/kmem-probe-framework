@@ -278,12 +278,18 @@ class MemTreeNode:
 
         return self
 
+    # Obtain a clean tree.
+    # We do it this way because collapse() and strip() must be called
+    # in an ordered fashion.
     def get_clean(self):
         self.__collapse()
         self.__strip()
         return self.__get_root()
 
     def find_first_branch(self, which):
+        if self.name == which:
+            return self
+
         for name, node in self.childs.items():
             if which == name:
                 return node
@@ -294,6 +300,7 @@ class MemTreeNode:
         print("[WARNING] Can't find first branch '{}'".format(which))
         return None
 
+    # This are for debug purposes, move along
     def treelike(self, level=0, attr="current_dynamic"):
         str = ""
         str += "{}\n".format(self.name)
@@ -319,7 +326,7 @@ class MemTreeNode:
 
     def fill_per_file(self, path):
 
-        filepath = "{}/{}".format(self.full_name(), path)
+        filepath = "{}{}/{}".format(MemTreeNode.abs_slash, self.full_name(), path)
 
         if path not in self.childs:
             self.childs[path] = MemTreeNode(path, self)
@@ -352,6 +359,8 @@ class MemTreeNode:
                     print "[WARNING] Duplicate data entry! {}".format(m.group(2))
                 child.data[m.group(2)] = int(m.group(1))
 
+    # This is deprecated, fill_per_file should be used instead.
+    # I keep it here just to have the code handy.
     def fill_per_dir(self, path):
 
         if self.funcs or self.data:
@@ -389,6 +398,7 @@ class MemTreeNode:
         parts = path.split('/', 1)
         if len(parts) == 1:
             self.fill(path)
+            pass
         else:
             node, others = parts
             if node not in self.childs:
@@ -396,6 +406,7 @@ class MemTreeNode:
             self.childs[node].add_child(others)
 
 
+# Based on addr2sym.py
 class SymbolMap:
     def __init__(self, filemap):
         self.fmap = {}
@@ -588,7 +599,14 @@ def main():
 
     root_path = "{}/{}".format(opts.buildpath, opts.start_branch).rstrip("/")
 
+    # Skip this directories when walking kernel build
     blacklist = ("scripts", "tools")
+
+    # We need to specify if user provided buildpath is absolute
+    if opts.buildpath.startswith("/"):
+        MemTreeNode.abs_slash = "/"
+    else:
+        MemTreeNode.abs_slash = ""
 
     print "Creating tree from compiled symbols at {}".format(root_path)
     tree = MemTreeNode(db = rootDB)
