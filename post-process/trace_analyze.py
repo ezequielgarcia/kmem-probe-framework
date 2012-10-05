@@ -625,9 +625,6 @@ def main():
                 filepath.endswith("built-in.o") == False and \
                 filepath.endswith("vmlinux.o") == False:
                 tree.add_child(filepath)
-#            if filepath.endswith("built-in.o") and \
-#                filepath.endswith("vmlinux.o") == False:
-#                tree.add_child(filepath)
 
     print "Cleaning tree"
     tree = tree.get_clean()
