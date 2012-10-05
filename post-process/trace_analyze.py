@@ -56,13 +56,13 @@ class Callsite:
     def waste(self):
         return self.current_dynamic() - self.current_req()
 
-    def alloc(self, alloc, req, ptr):
+    def do_alloc(self, alloc, req, ptr):
         self.__alloc += alloc
         self.__req += req
         self.__alloc_count += 1
         self.ptrs.append(ptr)
 
-    def free(self, ptr):
+    def do_free(self, ptr):
         self.__free_count += 1
         self.ptrs.remove(ptr)
 
@@ -100,7 +100,7 @@ class EventDB:
         if not fun in self.f:
             self.f[fun] = Callsite()
 
-        self.f[fun].alloc(alloc, req, ptr_obj)
+        self.f[fun].do_alloc(alloc, req, ptr_obj)
 
     def add_free(self, ptr):
         self.num_frees += 1
@@ -111,7 +111,7 @@ class EventDB:
 
         ptr_obj = self.p[ptr]
 
-        self.f[ptr_obj.fun].free(ptr_obj)
+        self.f[ptr_obj.fun].do_free(ptr_obj)
 
         # Remove it from pointers dictionary
         del self.p[ptr]
