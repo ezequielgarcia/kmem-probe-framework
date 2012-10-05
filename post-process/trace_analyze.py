@@ -251,7 +251,7 @@ class MemTreeNode:
         # Collapse one-child empty nodes
         for name, child in self.childs.items():
             if len(child.childs) > 2:
-                child.collapse()
+                child.__collapse()
 
             if len(child.childs) == 1 and not child.funcs and not child.data:
                 # Remove from child
