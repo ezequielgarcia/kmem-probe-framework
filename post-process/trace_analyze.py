@@ -350,8 +350,10 @@ class MemTreeNode:
                     print "Duplicate text entry! {}".format(m.group(2))
                 child.text[m.group(2)] = int(m.group(1))
 
-                if m.group(2) in child.db.f:
-                    child.funcs[m.group(2)] = child.db.f[m.group(2)]
+                # Search every callsite in db matching this name
+                for name, callsite in child.db.f.iteritems():
+                    if name.startswith(m.group(2)):
+                        child.funcs[name] = callsite
 
             m = re.match(r".*\s([0-9]+)\sOBJECT.*\s+([a-zA-Z0-9_\.]+)\b", line)
             if m:
@@ -588,7 +590,7 @@ def main():
             m = re.match(alloc_re, line)
             if m:
                 (fun, offset) = symbol.lookup(m.group(1))
-                rootDB.add_malloc(fun, #"{}+{}".format(fun,offset),
+                rootDB.add_malloc("{}+{}".format(fun, offset),
                                   m.group(2),
                                   int(m.group(3)),
                                   int(m.group(4)), line)
