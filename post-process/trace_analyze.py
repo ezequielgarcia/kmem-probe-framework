@@ -243,7 +243,7 @@ class MemTreeNode:
         return "/".join(reversed(l))
 
     def size(self):
-        if not self.node_size:
+        if self.node_size is None:
             self.node_size = MemTreeNodeSize(self)
         return self.node_size
 
