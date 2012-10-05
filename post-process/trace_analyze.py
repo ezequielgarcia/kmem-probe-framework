@@ -477,8 +477,8 @@ def main():
                       default="",
                       help="first directory name to use as ringchart root")
 
-    parser.add_option("-r", "--with-chart",
-                      dest="with_chart",
+    parser.add_option("-r", "--rings",
+                      dest="with_rings",
                       action="store_true",
                       help="plot ringchart information")
 
@@ -497,10 +497,17 @@ def main():
                       action="store_true",
                       help="trace kmem_cache_alloc/kmem_cache_free only")
 
-    parser.add_option("--account-file",
+    parser.add_option("-c", "--account-file",
                       dest="account_file",
                       default="",
                       help="show output matching slab_account output")
+
+    parser.add_option("-o", "--order-by",
+                      dest="order_by",
+                      default="current_dynamic",
+                      help="attribute to order account \
+                            [current_dynamic, total_dynamic, alloc_count, waste]")
+
 
     (opts, args) = parser.parse_args()
 
@@ -510,6 +517,13 @@ def main():
         print "Please set a kernel build path!"
         parser.print_help()
         return
+
+    # Check valid options
+    if len(opts.order_by) > 0:
+        if opts.order_by not in dir(Callsite):
+            print "{} is not a valid --order-by option".format(opts.order_by)
+            parser.print_help()
+            return
 
     # Clean user provided kernel path from dirty slashes
     opts.buildpath = opts.buildpath.rstrip("/")
@@ -522,14 +536,14 @@ def main():
         opts.do_malloc = False
         opts.do_cache = False
         opts.account_file = ""
-        opts.with_chart = True
+        opts.with_rings = True
         opts.with_stats = False
         opts.just_static = True
     else:
         opts.just_static = False
 
-    if opts.with_chart is None:
-        opts.with_chart = False
+    if opts.with_rings is None:
+        opts.with_rings = False
 
     if opts.with_stats is None:
         opts.with_stats = False
@@ -605,13 +619,11 @@ def main():
     if len(opts.account_file) != 0:
         print "Creating account file at {}".format(opts.account_file)
         rootDB.print_account(opts.account_file,
-                             opts.attr,
+                             opts.order_by,
                              tree)
 
-    if opts.with_stats:
-        rootDB.print_stats()
+    if opts.with_rings:
 
-    if opts.with_chart:
         filename = "linux"
         if len(opts.start_branch) != 0:
             filename = opts.start_branch
