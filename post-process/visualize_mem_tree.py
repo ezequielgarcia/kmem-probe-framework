@@ -10,6 +10,9 @@ import pylab
 from matplotlib.colors import colorConverter
 from matplotlib.patches import Wedge
 
+CENTER_X = 1.0
+CENTER_Y = 1.0
+WIDTH = 0.2
 tango_colors = ['#ef2929',
         '#ad7fa8',
         '#729fcf',
@@ -69,8 +72,8 @@ def ring_color(start_angle, level):
         # rel:    [0 - 198]
         # icolor: [0 - 5]
 
-#        if level == 1:
-#            return colorConverter.to_rgb('#808080')
+        if level == 1:
+            return colorConverter.to_rgb('#808080')
 
         f = 1 - (((level-1) * 0.3) / 8)
         rel = start_angle / 180. * 99
@@ -88,8 +91,8 @@ def ring_color(start_angle, level):
 
         return color
 
-def create_rings(tree, level=1, level_angle=360, start_angle=0, rings=[],
-         radius=0.2, center=(1.0,1.0), size_attr="static"):
+def create_child_rings(tree, level=2, level_angle=360, start_angle=0, rings=[],
+         radius=WIDTH, center=(CENTER_X, CENTER_Y), size_attr="static"):
 
     child_size = 0
     max_size = getattr(tree.size(), size_attr)()
@@ -105,13 +108,15 @@ def create_rings(tree, level=1, level_angle=360, start_angle=0, rings=[],
 
     s_angle = start_angle
     sections = {}
+
+    # Create child wedges
     for name, node in tree.childs.items():
 
         size = getattr(node.size(), size_attr)()
         s = Section(node, size, max_size, level_angle, s_angle)
         sections[name] = s
 
-        create_rings(node, level+1, s.angle, s_angle, rings, radius, center, size_attr)
+        create_child_rings(node, level+1, s.angle, s_angle, rings, radius, center, size_attr)
         s_angle += s.angle
         child_size += size
 
@@ -135,17 +140,26 @@ def create_rings(tree, level=1, level_angle=360, start_angle=0, rings=[],
 
     return rings
 
-def visualize_mem_tree(tree, attr="static", filename="ringchart"):
+def visualize_mem_tree(tree, size_attr="static", filename="ringchart"):
 
     RING_MIN_WIDTH = 1
     TEXT_MIN_WIDTH = 5
 
-    rings = create_rings(tree, level=2, size_attr=attr)
+    rings = create_child_rings(tree, size_attr=size_attr)
 
     fig = pylab.figure()
     ax = fig.add_subplot(111)
     annotations = []
     labels = []
+
+    text = "{} {}".format(tree.name,
+                          human_bytes(getattr(tree.size(), size_attr)()))
+    ann = ax.annotate(text,
+                      size=12,
+                      bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8),
+                      xy=(CENTER_X, CENTER_Y), xycoords='data',
+                      xytext=(CENTER_X, CENTER_Y), textcoords='data')
+    annotations.append(ann)
 
     for p in rings:
         wedge = p[0]
@@ -176,7 +190,6 @@ def visualize_mem_tree(tree, attr="static", filename="ringchart"):
                     xy=(x0, y0), xycoords='data',
                     xytext=(x, y), textcoords='data',
                     arrowprops=dict(arrowstyle="-", connectionstyle="angle3, angleA=0, angleB=90"),)
-                    #arrowprops=dict(arrowstyle="-", connectionstyle="arc3, rad=0"),)
         annotations.append(ann)
 
     (alloc, req) = tree.db.get_bytes()
