@@ -93,7 +93,7 @@ class EventDB:
         ptr_obj = Ptr(fun, ptr, alloc, req)
 
         if ptr in self.p:
-            print("Duplicate pointer! {}".format(line))
+            print("[WARNING] Duplicate pointer! {}".format(line))
 
         self.p[ptr] = ptr_obj
 
@@ -294,6 +294,7 @@ class MemTreeNode:
         for name, node in self.childs.items():
             return node.find_first_branch(which)
 
+        print("[WARNING] Can't find first branch '{}'".format(which))
         return None
 
     def treelike(self, level=0, attr="current_dynamic"):
@@ -351,13 +352,13 @@ class MemTreeNode:
             m = re.match(r".*\s([0-9]+)\sOBJECT.*\s+([a-zA-Z0-9_\.]+)\b", line)
             if m:
                 if m.group(2) in child.data:
-                    print "Duplicate data entry! {}".format(m.group(2))
+                    print "[WARNING] Duplicate data entry! {}".format(m.group(2))
                 child.data[m.group(2)] = int(m.group(1))
 
     def fill_per_dir(self, path):
 
         if self.funcs or self.data:
-            print "Oooops, already filled"
+            print "[WARNING] Oooops, already filled"
 
         filepath = "." + self.full_name() + "/built-in.o"
 
@@ -374,7 +375,7 @@ class MemTreeNode:
             m = re.match(r".*FUNC.*\b([a-zA-Z0-9_]+)\b", line)
             if m:
                 if m.group(1) in self.funcs:
-                    print "Duplicate entry! {}".format(m.group(1))
+                    print "[WARNING] Duplicate entry! {}".format(m.group(1))
 
                 if m.group(1) in self.db.f:
                     self.funcs[m.group(1)] = self.db.f[m.group(1)]
@@ -407,7 +408,7 @@ class SymbolMap:
         try:
             f = open(filemap)
         except:
-            print("Error: Cannot read map file: %s" % filemap)
+            print("[ERROR] Cannot read map file: %s" % filemap)
             sys.exit(1)
 
         for line in f.readlines():
