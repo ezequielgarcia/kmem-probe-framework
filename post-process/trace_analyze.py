@@ -6,7 +6,6 @@ import re
 import subprocess
 from optparse import OptionParser
 from os import path, walk
-from visualize_mem_tree import visualize_mem_tree
 
 kmalloc_re = r".*kmalloc.*call_site=([a-f0-9]+).*ptr=([a-f0-9]+).*bytes_req=([0-9]+)\s*bytes_alloc=([0-9]+)"
 kfree_re = r".*kfree.*call_site=[a-f0-9+]+.*ptr=([a-f0-9]+)"
@@ -621,6 +620,7 @@ def main():
             tree = tree.find_first_branch(opts.start_branch)
 
         print "Creating ringchart file at {}.png".format(filename)
+        from visualize_mem_tree import visualize_mem_tree
         visualize_mem_tree(tree, opts.attr, filename)
 
 if __name__ == "__main__":
