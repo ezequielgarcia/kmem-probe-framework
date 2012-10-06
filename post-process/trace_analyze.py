@@ -337,7 +337,7 @@ class MemTreeNode:
             str += "{} - {}={}\n".format(self.name, attr, attr_val)
 
         for name, node in self.childs.items():
-            child_str = node.treelike(level+1, attr)
+            child_str = node.treelike2(level+1, attr)
             if child_str:
                 str += "{}{}".format("  "*(level+1), child_str)
         return str
@@ -654,7 +654,8 @@ def main():
     print "Cleaning tree"
     tree = tree.get_clean()
 
-    print(tree.treelike(attr = opts.attr))
+    # DEBUG--ONLY. Should we add an option for this?
+    #print(tree.treelike(attr = opts.attr))
 
     if len(opts.account_file) != 0:
         print "Creating account file at {}".format(opts.account_file)
