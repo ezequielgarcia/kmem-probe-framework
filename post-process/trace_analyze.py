@@ -271,9 +271,11 @@ class MemTreeNode:
                 del self.childs[name]
 
     def __get_root(self):
-        if len(self.name) == 0:
-            if len(self.childs) == 1:
-                child = self.childs.itervalues().next()
+        if len(self.childs) == 1:
+            child = self.childs.itervalues().next()
+            # This is a pedantic test, the first node with
+            # multiple childs is the root we're searching
+            if not child.name.endswith(".o"):
                 return child.__get_root()
 
         return self
