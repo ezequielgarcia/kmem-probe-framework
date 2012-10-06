@@ -648,9 +648,12 @@ def main():
             filename = opts.start_branch
             tree = tree.find_first_branch(opts.start_branch)
 
-        print "Creating ringchart file at {}.png".format(filename)
-        from visualize_mem_tree import visualize_mem_tree
-        visualize_mem_tree(tree, opts.attr, filename)
+        if tree is None:
+            print "Sorry, there is nothing to plot for branch '{}'".format(opts.start_branch)
+        else:
+            print "Creating ringchart file at {}.png".format(filename)
+            from visualize_mem_tree import visualize_mem_tree
+            visualize_mem_tree(tree, opts.attr, filename)
 
 if __name__ == "__main__":
     main()
