@@ -1,0 +1,145 @@
+2. Using trace_analyze.py for dynamic reporting
+
+2.1. Producing a kmem trace logfile
+
+The purpose of trace_analyze script is to perform dynamic memory analysis.
+For this to work you need feed it with a kmem trace logfile;
+of course, you also need to give hime a built kernel tree.
+
+Such logfile must be produced on the running target kernel, but you can post-process it off-box.
+For instance, you boot your kernel with kmem parameters to enable ftrace kmem events:
+
+  kmem="kmem:kmalloc,kmem:kmalloc_node,kmem:kfree, \
+        kmem:kmem_cache_alloc,kmem:kmem_cache_alloc_node,kmem:kmem_cache_free"
+
+(it's recommended to enable all events, despite not running a NUMA machine).
+
+This parameter will have linux to start tracing as soon as possible.
+Of course some early traces will be lost, see below.
+
+(on your target kernel)
+
+  # To stop tracing
+  $ echo "0" > /sys/kernel/debug/tracing/tracing_on
+
+  # Dump 
+  $ cat /sys/kernel/debug/tracing/trace > kmem.log
+
+Now you need to get this file so you can post-process it using trace_analyze.py.
+In my case, I use qemu with a file backing serial device, so I simply do:
+
+(on your target kernel)
+  $ cat /sys/kernel/debug/tracing/trace > /dev/ttyS0
+
+And I get the log on qemu's backing file.
+
+Now you have everything you need to start the analysis.
+The script will post-process the logfile and will produce two kinds of output:
+ * an account file
+ * a ringchart png
+
+Let's see how to obtain each of these.
+
+2.2. Account file output
+
+To obtain the account file you need to use --acount-file (-c) parameter, like this:
+
+  ./trace_analyze.py -k ../torvalds -f kmem.log --account-file kmem_account.txt
+
+This will produce an account file like this:
+
+TODO: Add per-pointer to the account file
+
+You can tell the script to read only kmalloc events:
+
+  ./trace_analyze.py -k ../torvalds -f kmem.log -c kmem_account.txt --malloc
+
+Or you can tell the script to read only kmem_cache events:
+
+  ./trace_analyze.py -k ../torvalds -f kmem.log -c kmem_account.txt --cache
+   
+If you want to order the account file you can use --order-by (-o):
+
+  ./trace_analyze.py -k ../torvalds -f kmem.log -c kmem_account.txt --order-by=waste
+
+The possible options for order-by parameter are:
+
+ * total_dynamic
+ * current_dynamic
+ * alloc_count
+ * free_count
+ * waste
+
+You can pick a directory to get an account file only for the allocations from that directory.
+This is done with the --branch (-b) option, just like we've done for the static analysis:
+
+$ ./trace_analyze.py -k ../torvalds -f kmem.log -c kmem_account.txt -b drivers
+
+All of these options can be combined. For instance, if you want to get malloc events only,
+coming from fs/ directory and ordered by current size:
+
+$ ./trace_analyze.py -k ../torvalds -f kmem.log -b fs -c kmem_account.txt -o current_dynamic --malloc
+
+2.3. Producing a ringchart for dynamic allocations
+
+$ ./trace_analyze.py -k ../torvalds --rings -f kmem.log -b fs -c kmem_account.txt -o current_dynamic --malloc
+
+2.4. Producing a pretty ringchart
+
+As already explained in the static analysis section, it's possible to produce
+a ringchart to get 'the big picture' of dynamic allocations.
+You will need to have matplotlib installed, which should be as easy as:
+
+   $ {your_pkg_manager} install matplotlib
+
+The script usage is very simple, just pass the parameter --ringchar (-r)
+
+./post-process/trace_analyze.py --rings -k linux/ -f boot_kmem.log
+
+As before you can filter kmalloc or kmem_cache traces:
+
+./post-process/trace_analyze.py --rings -k linux/ -f boot_kmem.log --malloc
+
+Fixing a wrongly reported allocation
+------------------------------------
+
+There are a number of functions (kstrdup, kmemdup, krealloc, etc) that do
+some kind of allocation on behalf of its caller.
+
+Of course, we don't want to get trace reports from these functions,
+but rather from its caller. To acomplish this, we must use a variant
+of kmalloc, called kmalloc_track_caller, which does exactly that.
+
+Let's see an example. As of today kvasprintf() implementation looks
+like this
+
+(see lib/kasprintf.c:14)
+char *kvasprintf(gfp_t gfp, const char *fmt, va_list ap)
+{
+	/* code removed */
+	p = kmalloc(len+1, gfp); 
+
+And trace_analyze produces the account file 
+
+total    waste      net alloc/free  caller
+---------------------------------------------
+2161     1184     2161   148/0     kvasprintf
+
+The source of this 148 allocations may be a single caller,
+or it may be multiple callers. We just can't know.
+However, if we replace kmalloc with kmalloc_track_caller,
+we're going to find that out.
+
+char *kvasprintf(gfp_t gfp, const char *fmt, va_list ap)
+{
+        /* code removed */
+        p = kmalloc_track_caller(len+1, gfp);
+
+After running the re-built kernel, and comparing both current
+and previous account files, we find this is the real caller:
+
+total    waste      net alloc/free  caller
+---------------------------------------------
+2161     1184     2161   148/0     kobject_set_name_vargs
+
+So, we've accurately tracked this allocation down to the kobject code.
