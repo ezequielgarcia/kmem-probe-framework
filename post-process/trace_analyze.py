@@ -497,12 +497,6 @@ def main():
                       default="",
                       help="path to built kernel tree")
 
-    parser.add_option("-a", "--attr",
-                      dest="attr",
-                      default="current_dynamic",
-                      help="attribute to visualize [static, current, \
-                                    current_dynamic, total_dynamic, waste]")
-
     parser.add_option("-f", "--file",
                       dest="file",
                       default="",
@@ -517,6 +511,12 @@ def main():
                       dest="with_rings",
                       action="store_true",
                       help="plot ringchart information")
+
+    parser.add_option("-a", "--rings-attr",
+                      dest="rings_attr",
+                      default="current_dynamic",
+                      help="attribute to visualize [static, current, \
+                                    current_dynamic, total_dynamic, waste]")
 
     parser.add_option("--malloc",
                       dest="do_malloc",
@@ -563,7 +563,7 @@ def main():
     # then we'll fallback to static report mode.
     if len(opts.file) == 0:
         print "No trace log file specified: will report on static size only"
-        opts.attr = "static"
+        opts.rings_attr = "static"
         opts.do_malloc = False
         opts.do_cache = False
         opts.account_file = ""
@@ -646,7 +646,7 @@ def main():
     tree = tree.get_clean()
 
     # DEBUG--ONLY. Should we add an option for this?
-    #print(tree.treelike(attr = opts.attr))
+    #print(tree.treelike(attr = opts.rings_attr))
 
     if len(opts.account_file) != 0:
         print "Creating account file at {}".format(opts.account_file)
@@ -655,17 +655,17 @@ def main():
                              tree)
 
     if opts.with_rings:
-
         filename = "linux"
         if len(opts.start_branch) != 0:
-            filename = opts.start_branch
-            tree = tree.find_first_branch(opts.start_branch)
+            # Convert to a valid filename
+            filename = re.sub('[^0-9a-zA-Z_]', '_', opts.start_branch)
 
         if tree is None:
             print "Sorry, there is nothing to plot for branch '{}'".format(opts.start_branch)
         else:
-            print "Creating ringchart file at {}.png".format(filename)
-            visualize_mem_tree(tree, opts.attr, filename)
+            print "Creating ringchart at {}.png for attribute '{}'".format(filename,
+                                                                     opts.rings_attr)
+            visualize_mem_tree(tree, opts.rings_attr, filename)
 
 
 ##########################################################################
