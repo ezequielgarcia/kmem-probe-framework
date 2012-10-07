@@ -512,6 +512,11 @@ def main():
                       action="store_true",
                       help="plot ringchart information")
 
+    parser.add_option("-i", "--rings-show",
+                      dest="rings_show",
+                      action="store_true",
+                      help="show interactive ringchart")
+
     parser.add_option("-a", "--rings-attr",
                       dest="rings_attr",
                       default="current_dynamic",
@@ -580,6 +585,9 @@ def main():
 
     if opts.with_rings is None:
         opts.with_rings = False
+
+    if opts.rings_show is None:
+        opts.rings_show = False
 
     if opts.do_malloc is True and opts.do_cache is None:
         print "Filtering kmalloc events only"
@@ -671,9 +679,9 @@ def main():
         if tree is None:
             print "Sorry, there is nothing to plot for branch '{}'".format(opts.start_branch)
         else:
-            print "Creating ringchart at {}.png for attribute '{}'".format(filename,
-                                                                     opts.rings_attr)
-            visualize_mem_tree(tree, opts.rings_attr, filename)
+            print "Creating ringchart for attribute '{}'".format(filename,
+                                                                 opts.rings_attr)
+            visualize_mem_tree(tree, opts.rings_attr, filename, opts.rings_show)
 
 
 ##########################################################################
@@ -817,7 +825,7 @@ def create_child_rings(tree, level=2, level_angle=360, start_angle=0, rings=[],
     return rings
 
 
-def visualize_mem_tree(tree, size_attr="static", filename="ringchart"):
+def visualize_mem_tree(tree, size_attr, filename, show):
     import pylab
 
     RING_MIN_WIDTH = 1
@@ -873,9 +881,14 @@ def visualize_mem_tree(tree, size_attr="static", filename="ringchart"):
     (alloc, req) = tree.db.get_bytes()
 
     pylab.axis('off')
-    pylab.savefig("{}.png".format(filename),
-                  bbox_extra_artists=annotations,
-                  bbox_inches='tight', dpi=300)
+    if show:
+        print("Plotting interactive")
+        pylab.show()
+    else:
+        print("Plotting to file '{}.png'".format(filename))
+        pylab.savefig("{}.png".format(filename),
+                      bbox_extra_artists=annotations,
+                      bbox_inches='tight', dpi=300)
 
 ##########################################################################
 
