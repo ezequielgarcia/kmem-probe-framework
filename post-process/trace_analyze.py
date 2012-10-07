@@ -552,7 +552,13 @@ def main():
     # Check valid options
     if len(opts.order_by) > 0:
         if opts.order_by not in dir(Callsite):
-            print "{} is not a valid --order-by option".format(opts.order_by)
+            print "Hey! {} is not a valid --order-by option".format(opts.order_by)
+            parser.print_help()
+            return
+
+    if len(opts.rings_attr) > 0:
+        if opts.rings_attr not in dir(MemTreeNodeSize):
+            print "Hey! {} is not a valid --rings-attr option".format(opts.rings_attr)
             parser.print_help()
             return
 
