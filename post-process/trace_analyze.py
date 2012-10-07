@@ -518,11 +518,6 @@ def main():
                       action="store_true",
                       help="plot ringchart information")
 
-    parser.add_option("--with-stats",
-                      dest="with_stats",
-                      action="store_true",
-                      help="print statistics")
-
     parser.add_option("--malloc",
                       dest="do_malloc",
                       action="store_true",
@@ -573,16 +568,12 @@ def main():
         opts.do_cache = False
         opts.account_file = ""
         opts.with_rings = True
-        opts.with_stats = False
         opts.just_static = True
     else:
         opts.just_static = False
 
     if opts.with_rings is None:
         opts.with_rings = False
-
-    if opts.with_stats is None:
-        opts.with_stats = False
 
     if opts.do_malloc is True and opts.do_cache is None:
         print "Filtering kmalloc events only"
