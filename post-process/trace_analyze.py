@@ -660,6 +660,8 @@ def main():
             # Convert to a valid filename
             filename = re.sub('[^0-9a-zA-Z_]', '_', opts.start_branch)
 
+        filename = filename + "_" + opts.rings_attr
+
         if tree is None:
             print "Sorry, there is nothing to plot for branch '{}'".format(opts.start_branch)
         else:
