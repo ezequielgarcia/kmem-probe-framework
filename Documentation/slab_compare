@@ -1,0 +1,54 @@
+
+Dynamically allocated kernel strings: a source of fragmentation
+---------------------------------------------------------------
+
+Strings, when dynamically allocated, are one of the greatest source
+of fragmentation. This is instrinsic to the 'string' nature:
+Strings never have a regular size.
+String are frequently small, with typical sizes between 4 and 16 (?) bytes.
+
+The (primary?) source of strings is directory entries:
+file names, directory names, and such.
+
+Let's compare each allocator and see how they perform.
+
+1. SLOB
+
+SLOB prepends a fixed-size header to every kmalloc allocation.
+On x86 this header is 8 bytes long (how about other arches?).
+
+So, if requested string size is between 4 and 16 bytes,
+the fragmentation ratio is between 200% and 50%.
+
+SLOB allocator is different from SLAB and SLUB: it doesn't really
+implement a 'slab cache' concept. For this reason there is no real
+difference between kmallocing 5 bytes or 100 bytes.
+The allocator won't search for a cache of a proper size,
+but instead just allocate a chunk prepended with a fixed-size header.
+
+Since wastage is independent of requested size, small allocations may
+waste a lot, but the wastage falls with increasing allocations.
+
+2. SLUB
+
+When allocating strings SLUB allocator uses its 8, 16 and 32 byte caches.
+For requested size between 4 and 16 bytes,
+the fragmentation ratio is between 100 and 0%, the worst cases being
+4 and 9 bytes, with fragmentation of 100% and 78% respectively.
+
+SLUB being a cache-based allocator, the fragmentation will depend on how aligned
+the requested size is to the available size.
+For instance, requesting 32 bytes allocates 32 bytes, resulting in zero fragmentation.
+Requesting 33 bytes allocates 64 bytes, resulting in 94% fragmentation.
+
+3. SLAB
+
+SLAB operates in a similar way to SLUB, in the sense that allocations are
+cache-based and fragmentation depends on fitness between requested size
+and cache size.
+However, since the smallest SLAB cache is 32 bytes, and strings are typically
+much smaller, SLAB is the less efficient of the three.
+
+Just to compare, for requested size between 4 and 16 bytes,
+the fragmentation ratio is between 700% and 100%.
+
