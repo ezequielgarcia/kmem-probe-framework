@@ -3,9 +3,8 @@
 # Copyright (C) 2012 Ezequiel Garcia <elezegarcia@gmail.com>
 #
 # This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
+# it under the terms of the GNU General Public License version 2
+# as published by the Free Software Foundation.
 #
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -507,9 +506,9 @@ def main():
                       default="",
                       help="first directory name to use as ringchart root")
 
-    parser.add_option("-r", "--rings",
-                      dest="with_rings",
-                      action="store_true",
+    parser.add_option("-r", "--rings-file",
+                      dest="rings_file",
+                      default="",
                       help="plot ringchart information")
 
     parser.add_option("-i", "--rings-show",
@@ -582,9 +581,6 @@ def main():
         opts.just_static = True
     else:
         opts.just_static = False
-
-    if opts.with_rings is None:
-        opts.with_rings = False
 
     if opts.rings_show is None:
         opts.rings_show = False
@@ -668,20 +664,12 @@ def main():
                              opts.order_by,
                              tree)
 
-    if opts.with_rings:
-        filename = "linux"
-        if len(opts.start_branch) != 0:
-            # Convert to a valid filename
-            filename = re.sub('[^0-9a-zA-Z_]', '_', opts.start_branch)
-
-        filename = filename + "_" + opts.rings_attr
-
+    if len(opts.rings_file) != 0 or opts.rings_show == True :
         if tree is None:
             print "Sorry, there is nothing to plot for branch '{}'".format(opts.start_branch)
         else:
-            print "Creating ringchart for attribute '{}'".format(filename,
-                                                                 opts.rings_attr)
-            visualize_mem_tree(tree, opts.rings_attr, filename, opts.rings_show)
+            print "Creating ringchart for attribute '{}'".format(opts.rings_attr)
+            visualize_mem_tree(tree, opts.rings_attr, opts.rings_file, opts.rings_show)
 
 
 ##########################################################################
@@ -881,14 +869,16 @@ def visualize_mem_tree(tree, size_attr, filename, show):
     (alloc, req) = tree.db.get_bytes()
 
     pylab.axis('off')
+
+    if len(filename) != 0:
+        print("Plotting to file '{}'".format(filename))
+        pylab.savefig("{}".format(filename),
+                      bbox_extra_artists=annotations,
+                      bbox_inches='tight', dpi=300)
     if show:
         print("Plotting interactive")
         pylab.show()
-    else:
-        print("Plotting to file '{}.png'".format(filename))
-        pylab.savefig("{}.png".format(filename),
-                      bbox_extra_artists=annotations,
-                      bbox_inches='tight', dpi=300)
+
 
 ##########################################################################
 
