@@ -772,7 +772,7 @@ def human_bytes(bytes, precision=1):
     for factor, suffix in abbrevs:
         if bytes >= factor:
             break
-    return '{0:.{1}f} {2}'.format(bytes / factor, precision, suffix)
+    return '{0:.{1}f} {2}'.format(float(bytes)/factor, precision, suffix)
 
 
 class Section:
