@@ -647,10 +647,16 @@ def main():
             continue
 
         for filepath in [path.join(root,f) for f in files]:
-            if filepath.endswith(".o") and \
-                filepath.endswith("built-in.o") == False and \
-                filepath.endswith("vmlinux.o") == False:
-                tree.add_child(filepath)
+            if filepath.endswith("built-in.o"):
+                continue
+            if filepath.endswith("vmlinux.o"):
+                continue
+            if filepath.endswith(".o"):
+                # We need to check if this object file,
+                # has a corresponding source file
+                filesrc = "{}.c".format(path.splitext(filepath)[0])
+                if path.exists(filesrc):
+                    tree.add_child(filepath)
 
     print "Cleaning tree"
     tree = tree.get_clean()
