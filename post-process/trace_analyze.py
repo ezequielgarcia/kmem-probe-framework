@@ -131,6 +131,27 @@ class EventDB:
         # Remove it from pointers dictionary
         del self.p[ptr]
 
+    def print_callers(self, filepath, filter_tree=None):
+
+        if filter_tree is None:
+            filter_symbol = lambda f: True
+        else:
+            filter_symbol = filter_tree.symbol_is_here
+
+        syms = [(f,c) for f,c in self.f.items() if filter_symbol(f)]
+
+        f = open(filepath, 'w')
+
+        for name, c in syms:
+
+            symdir = filter_tree.get_symbol_dir(name)
+            f.write("{:<60} {:<8} {:<8} {:<8}\n".format(name,
+                                           c.current_dynamic(),
+                                           c.waste(),
+                                           symdir))
+
+        f.close()
+
     def print_account(self, filepath, order_by, filter_tree=None):
 
         current_dynamic = 0
@@ -237,6 +258,16 @@ class MemTreeNode:
                 self.db = parent.db
         else:
             self.db = db
+
+    def get_symbol_dir(self, symbol):
+        if symbol in self.funcs:
+            return self.full_name()
+        else:
+            for name, child in self.childs.items():
+                symdir = child.get_symbol_dir(symbol)
+                if symdir is not None:
+                    return symdir
+        return None
 
     def symbol_is_here(self, symbol):
         if symbol in self.funcs:
@@ -537,6 +568,11 @@ def main():
                       default="",
                       help="show output matching slab_account output")
 
+    parser.add_option("-l", "--callers-file",
+                      dest="callers_file",
+                      default="",
+                      help="show callers file suitable for ringchart generation")
+
     parser.add_option("-o", "--order-by",
                       dest="order_by",
                       default="current_dynamic",
@@ -662,7 +698,12 @@ def main():
     tree = tree.get_clean()
 
     # DEBUG--ONLY. Should we add an option for this?
-    #print(tree.treelike(attr = opts.rings_attr))
+    #print(tree.treelike2(attr = opts.rings_attr))
+    if len(opts.callers_file) != 0:
+        print "Creating callers file at {}".format(opts.callers_file)
+        rootDB.print_callers(opts.callers_file,
+                             tree)
+
 
     if len(opts.account_file) != 0:
         print "Creating account file at {}".format(opts.account_file)
