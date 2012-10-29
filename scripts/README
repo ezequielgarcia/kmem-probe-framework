@@ -1,0 +1,20 @@
+
+Some useful scripts to automate my tasks
+----------------------------------------
+
+do_trace.sh
+  Launch trace_analyze tests
+
+make_img.sh
+make_ext2_testfs.sh
+make_initramfs.sh
+make_probe.sh
+make_xfs_img.sh
+make_xfs_probe.sh
+  Create rootfs: initramfs, ext2 images, xfs images, etc. 
+
+clean.sh
+create.sh
+mkdevs.sh
+sources.sh
+  Create a customized hand-built busybox rootfs
