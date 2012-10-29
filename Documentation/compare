@@ -1,0 +1,191 @@
+Characterizing a baseline kernel
+--------------------------------
+
+1. The baseline
+
+If we compile a kernel with almost no options selected,
+picking just the very needed to have a running initramfs
+with sysfs and a console, then we get: 
+
+$ size vmlinux
+text	   data	    bss	    dec	    hex	filename
+1235041	 199156	1194776	2628973	 281d6d	vmlinux
+
+$ size -A vmlinux
+vmlinux  :
+section                    size         addr
+.text                    865680   3238002688
+.notes                       36   3238868368
+__ex_table                 2928   3238868416
+.rodata                  287255   3238875136
+__init_rodata                32   3239162392
+__param                     688   3239162424
+__modver                   2840   3239163112
+.data                    106752   3239165952
+.init.text                76970   3239276544
+.init.data                92404   3239354368
+.x86_cpu_dev.init            28   3239446772
+.altinstructions            864   3239446800
+.altinstr_replacement       180   3239447664
+.exit.text                  380   3239447848
+.bss                      77824   3239448576
+.brk                    1114112   3239526400
+.comment                     42            0
+.debug_frame               3540            0
+Total                   2632555
+
+Note that we have some discrepancies. 
+
+On the other side, it's possible to forget about this differences
+and use the 'size' tool, or our 'trace_analyze' script, to find out
+deltas from this baseline as long as we always measure size
+with the same ruler.
+
+Now, using trace_analyze to output a ringchart, we can
+estimate the contribution per sub-system.
+For static size we have: 
+
+init:      24.2  K
+lib:       32.0  K
+mm:        143.6 K
+fs:        151.1 K
+drivers:   221.0 K
+arch:      230.8 K
+kernel:    337.5 K
+
+Looking into the 'kernel' dir contribution, we see a large part
+coming from the trace framework itself, which of course could be
+removed on a production kernel.
+We'll use this kernel as a baseline to compare the bloatness of
+a few relevant subsystems against a more complex configuration.
+
+For this baseline kernel, the dynamic footprint taken right after booting is:
+
+drivers:   54.2 K
+kernel:    56.2 K
+fs:        501.2 K
+
+As expected, most allocations are done to store inodes.
+
+2. Adding procfs
+
+Static footprint:
+
+init:      24.2 K
+lib:       32.0 K
+mm:        147.3 K
+fs:        199.8 K
+drivers:   224.2 K
+arch:      231.1 K
+kernel:    354.8 K
+
+This shows proc/ static footprint is about 50 K.
+
+Dynamic footprint:
+
+The same! Badly used? Should we stress proc/?
+
+3. Adding a disk-based filesystem, ext2
+
+Static footprint, with baseline delta
+
+init:      24.8  K (+0.6   K)
+lib:       31.4  K (-0.6   K) 
+block:     73.7  K (+73.7  K)
+mm:        159.6 K (+16    K)
+x86:       250.1 K (+19.3  K)
+fs:        258.5 K (+107.4 K)
+kernel:    353.7 K (+16.2  K)
+drivers:   464.5 K (+243.5 K)
+
+Of course, hard disk drivers and ext2 filesystem
+are the ones with the larget delta.
+The othersubsystems: mm, kernel and arch, stay almost the same.
+
+Dynamic footprint (right after booting):
+
+drivers:   140.2 K (+86.0 K)
+kernel:    88.9  K (+32.7 K)
+fs:        599.9 K (+98.7 K)
+mm:        34.1  K (+34.1 K)
+lib:       19.3  K (+19.3 K)
+
+Almost half of the memory allocated goes to inodes and dentries:
+namely alloc_inode+0x2aL and __d_alloc+0x23L callsites
+are responsible for 54% of the slab allocations.
+
+Greatest wasters
+
+Wasted bytes (internal SLAB fragmentation) comes
+mostly from kmalloc allocations.
+Also this varies greatly with the selected SL[AOU]B allocator.
+
+Using SLAB the list of greatest wasters is as follows:
+
+total    waste      net alloc/free  caller
+---------------------------------------------
+21024    15191    19808   657/38    sysfs_new_dirent+0x25L
+32768    14336    32768     2/0     ata_port_alloc+0x20L
+13184     9982    13184   412/0     __trace_define_field+0x35L
+13184     9327    13184   412/0     __trace_define_field+0x48L
+17536     6576    17536   137/0     device_private_init+0x1fL
+7488     5818     7488   234/0     kobject_set_name_vargs+0x1bL
+341320     4868   340760  1219/2     alloc_inode+0x2aL
+11072     4152    11072   173/0     scsi_dev_info_list_add_keyed+0x40L
+6912     1917     6784    54/1     __proc_create+0x68L
+6144     1536     6144     6/0     alloc_pci_dev+0x1cL
+16896     1408    16896    88/0     device_create_vargs+0x32L
+
+* sysfs_new_dirent is duplicating small strings, and therefore
+is expected to waste bytes as already discussed.
+
+Solution? We could use smaller caches if this is important,
+or we can embed sysfs names into sysfs structs.
+
+On the other side, sysfs entries are fairly bounded so it may
+be not too serious.
+
+* ata_port_alloc is kmallocing a very big structure, 9536 bytes,
+and since it gets power-of-two page-size allocations (physically contiguous)
+it gets 4 pages. This is a common wastage pattern.
+
+Solution? If this waste matters to you, try to fit the structure
+on a page or split it to make it fit pages. 
+
+* trace_xxx stuff is not of interest. It's an artifact of instrumentation.
+
+* The rest is a combination of the already discussed effects: small kmallocs,
+smaller than available caches, or too big kmalloc, that fallback to page-size
+(power-of-two) allocations.
+
+4. Using angstrom rootfs
+
+Let's measure a more involved rootfs: angstrom distribution.
+
+This has been generated by angstrom online tool (see X).
+It includes:
+
+* system v init scripts
+* udev
+* lighttpd web server
+* dropbear ssh server
+
+Static footprint
+
+lib:       64.1  K (+39.9  K)
+block:     86.6  K (+86.6  K)
+mm:        203.4 K (+59.8  K)
+arch:      317.2 K (+86.4  K)
+fs:        428.6 K (+277.5 K)
+kernel:    487.8 K (+150.3 K)
+net:       700.7 K (+700.7 K)
+drivers:   821.3 K (+600.3 K)
+
+Dynamic footprint
+
+fs:        1.5 M   (+1M)
+lib:       67.5 K  (+67.5  K)
+mm:        305.0 K (305.0  K)
+drivers:   174.5 K (120.3  K)
+net:       192.9 K (+192.9 K)
+kernel:    162.4 K (+106.2 K)
