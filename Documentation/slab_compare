@@ -52,3 +52,48 @@ much smaller, SLAB is the less efficient of the three.
 Just to compare, for requested size between 4 and 16 bytes,
 the fragmentation ratio is between 700% and 100%.
 
+Cache objects fragmentation compared
+------------------------------------
+
+Cache objects fragmentation occurs when each allocated object needs some extra
+bytes for alignment, debug or other metadata. Let's analyze each case.
+
+1. SLOB
+
+Being a very simple allocator, SLOB only needs to reserve extra bytes for
+rcu-destroyed objects. 
+Currently, each of these objects wastes 12 bytes to store an rcu related struct.
+
+For regular objects the wastage is nil.
+
+It's important to keep in mind that SLOB can leave 'holes' inside slob pages.
+These holes are unallocated space that is not lost, because it can
+be used if it fits for some requested allocation.
+
+However this means that, on low memory situations, it's possible to run out of memory
+for a specific allocation, but still have free space left on these holes.
+
+2. SLAB
+
+If compiled without any debug mechanism (poison, redzone, ...) SLAB allocator
+will only reserve extra bytes to return aligned objects.
+Of course, the wastage depends on each architecture.
+
+If compiled with debug enabled SLAB will add 24 bytes to each allocated object
+for red zoning and user store (see comments in mm/slab.c).
+
+3. SLUB
+
+If compiled without any debug mechanism (poison, redzone, ...) SLUB allocator
+will reserve extra bytes for alignment and to store a freelist pointer.
+
+The latter is true only for objects with a defined constructor.
+In this case, the wastage is fairly small: only 4/8 bytes (depending on the
+architecture) are needed to store a pointer.
+However, if many objects are allocated, the wastage can become noticeable.
+
+An example of this is the allocation of inodes. Even on a very minimal system,
+more than 1k inodes can get allocated, resulting in a total wastage of 8k bytes.
+
+As with SLAB, if compiled with debug enabled, the allocator adds some extra
+bytes to each object for red zoning and user store.
